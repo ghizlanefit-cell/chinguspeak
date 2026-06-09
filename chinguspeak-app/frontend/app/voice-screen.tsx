@@ -26,6 +26,19 @@ import { chinguIdleMascot, chinguActiveMascot, heartIcon } from "@/src/theme";
 // simulated timing. Native iOS/Android prod builds never hit this branch.
 const MOCK_WEB = process.env.EXPO_PUBLIC_MOCK_API === "1" && Platform.OS === "web";
 
+// Pingo-style waveform bars: each bar pulses on a different rhythm by
+// interpolating the same 0→1 listeningPulse value through different curves,
+// so the bars feel "alive" without needing 7 separate Animated.Value loops.
+const WAVEFORM_BARS: { input: number[]; output: number[] }[] = [
+  { input: [0, 0.25, 0.5, 0.75, 1],  output: [0.35, 1.0, 0.5, 0.85, 0.35] },
+  { input: [0, 0.2,  0.45, 0.7, 1],  output: [0.65, 0.35, 1.0, 0.45, 0.65] },
+  { input: [0, 0.15, 0.4,  0.65, 1], output: [0.45, 0.95, 0.4, 1.0, 0.45] },
+  { input: [0, 0.3,  0.55, 0.8, 1],  output: [1.0,  0.45, 0.9, 0.4, 1.0] },
+  { input: [0, 0.2,  0.5,  0.75, 1], output: [0.55, 0.85, 0.4, 0.95, 0.55] },
+  { input: [0, 0.25, 0.55, 0.85, 1], output: [0.4,  1.0, 0.5, 0.7,  0.4] },
+  { input: [0, 0.15, 0.45, 0.7, 1],  output: [0.7,  0.4, 0.95, 0.45, 0.7] },
+];
+
 export default function VoiceScreen() {
   const prefs = usePrefs();
   const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
@@ -301,6 +314,29 @@ export default function VoiceScreen() {
             <Image source={isSpeaking ? chinguActiveMascot : chinguIdleMascot} style={styles.mainMascot} />
           </Animated.View>
 
+          {recording && (
+            <View style={styles.waveformRow} testID="voice-waveform">
+              {WAVEFORM_BARS.map((bar, i) => (
+                <Animated.View
+                  key={i}
+                  style={[
+                    styles.waveBar,
+                    {
+                      transform: [
+                        {
+                          scaleY: listeningPulse.interpolate({
+                            inputRange: bar.input,
+                            outputRange: bar.output,
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                />
+              ))}
+            </View>
+          )}
+
           <Text style={styles.statusText} testID="voice-status-text">
             {recording
               ? "Listening with Deepgram Nova-2..."
@@ -346,6 +382,12 @@ export default function VoiceScreen() {
             <Image source={heartIcon} style={styles.heartIcon} />
             <Text style={styles.resultTitle}>CHINGU TRANSLATION RESULT</Text>
           </View>
+          {transcript.trim() ? (
+            <View style={styles.transcriptBlock} testID="voice-transcript-block">
+              <Text style={styles.transcriptLabel}>YOU SAID</Text>
+              <Text style={styles.transcriptText} testID="voice-transcript-text">{transcript}</Text>
+            </View>
+          ) : null}
           <Text style={styles.resultBody} testID="voice-result-text">{translated || transcript || "Your translated result appears here."}</Text>
           {!!error && <Text style={styles.error}>{error}</Text>}
         </Animated.View>
@@ -442,7 +484,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 28,
     paddingHorizontal: 18,
     paddingTop: 10,
-    paddingBottom: 30,
+    paddingBottom: 96,
     borderWidth: 1,
     borderColor: "#EFE8FC",
   },
@@ -457,6 +499,41 @@ const styles = StyleSheet.create({
   resultHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
   heartIcon: { width: 24, height: 24, resizeMode: "contain" },
   resultTitle: { color: "#8B5CF6", fontSize: 12, fontWeight: "900", letterSpacing: 0.4 },
-  resultBody: { color: "#1F1A2E", fontSize: 16, lineHeight: 24, marginTop: 10, fontWeight: "600" },
+  resultBody: { color: "#1F1A2E", fontSize: 18, lineHeight: 26, marginTop: 6, fontWeight: "700" },
+  transcriptBlock: {
+    marginTop: 10,
+    marginBottom: 12,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F0EAFC",
+  },
+  transcriptLabel: {
+    color: "#A78BFA",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  transcriptText: {
+    color: "#6B6585",
+    fontSize: 14,
+    lineHeight: 20,
+    fontStyle: "italic",
+    fontWeight: "500",
+  },
+  waveformRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    marginTop: 18,
+    height: 44,
+  },
+  waveBar: {
+    width: 5,
+    height: 40,
+    borderRadius: 3,
+    backgroundColor: "#EC4899",
+  },
   error: { color: "#EF4444", marginTop: 10, fontSize: 12, fontWeight: "700" },
 });
