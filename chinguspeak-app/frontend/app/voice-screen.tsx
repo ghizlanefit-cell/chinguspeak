@@ -236,7 +236,14 @@ export default function VoiceScreen() {
       let b64 = "";
       let mime = "audio/mp4";
       if (!MOCK_WEB) {
-        await recorder.stop();
+        // The recorder may have already auto-stopped on silence detection
+        // between when we read stageRef and when we get here. Swallow the
+        // "not initialised" / "already stopped" cases instead of crashing.
+        try {
+          await recorder.stop();
+        } catch {
+          // ignore — non-fatal
+        }
         const uri = recorder.uri;
         if (!uri) {
           if (sessionActiveRef.current) start();
@@ -343,9 +350,17 @@ export default function VoiceScreen() {
   const endSession = React.useCallback(async () => {
     setSessionActive(false);
     clearMockListenTimer();
-    try {
-      if (!MOCK_WEB && stageRef.current === "recording") await recorder.stop();
-    } catch { /* ignore */ }
+    // Web preview with mocks never wires a real MediaRecorder, so calling
+    // recorder.stop() throws "Cannot start an audio recording without
+    // initializing a MediaRecorder". Skip the recorder cleanup entirely in
+    // that branch — native iOS/Android prod still tears down the recorder.
+    if (!MOCK_WEB && stageRef.current === "recording") {
+      try {
+        await recorder.stop();
+      } catch {
+        // Recorder may already be stopped or never prepared — ignore.
+      }
+    }
     try { player?.pause?.(); } catch { /* noop */ }
     setStage("idle");
     setIsSpeaking(false);
@@ -365,7 +380,18 @@ export default function VoiceScreen() {
   React.useEffect(() => {
     return () => {
       clearMockListenTimer();
-      try { recorder.stop(); } catch { /* noop */ }
+      // Safety guard: the web preview never initialises a real MediaRecorder
+      // when MOCK_API=1, so calling recorder.stop() on unmount triggers an
+      // unhandled rejection from AudioRecorderWeb.stop. Both sync throws AND
+      // async rejections are swallowed below.
+      if (!MOCK_WEB) {
+        try {
+          const maybePromise = recorder.stop() as unknown as Promise<unknown> | undefined;
+          if (maybePromise && typeof (maybePromise as Promise<unknown>).then === "function") {
+            (maybePromise as Promise<unknown>).catch(() => { /* noop */ });
+          }
+        } catch { /* noop */ }
+      }
       try { player?.pause?.(); } catch { /* noop */ }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
