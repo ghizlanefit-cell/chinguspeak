@@ -4,12 +4,10 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ActivityIndicator,
   Platform,
   Image,
   Animated,
 } from "react-native";
-import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAudioRecorder, useAudioRecorderState, useAudioPlayer, AudioModule, RecordingPresets } from "expo-audio";
@@ -39,10 +37,19 @@ const WAVEFORM_BARS: { input: number[]; output: number[] }[] = [
   { input: [0, 0.15, 0.45, 0.7, 1],  output: [0.7,  0.4, 0.95, 0.45, 0.7] },
 ];
 
+// VAD silence threshold (dBFS) and required quiet window for auto-stop on native.
+const SILENCE_DBFS = -45;
+const SILENCE_HOLD_MS = 2500;
+// On web preview there's no real recorder, so we simulate end-of-utterance
+// after a short listening window instead.
+const MOCK_LISTEN_MS = 1800;
+
 export default function VoiceScreen() {
   const prefs = usePrefs();
   const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
   const recorderState = useAudioRecorderState(recorder, 200);
+
+  const [sessionActive, setSessionActive] = React.useState(false);
   const [stage, setStage] = React.useState<"idle" | "recording" | "processing" | "done">("idle");
   const [transcript, setTranscript] = React.useState("");
   const [translated, setTranslated] = React.useState("");
@@ -50,20 +57,30 @@ export default function VoiceScreen() {
   const [audioUri, setAudioUri] = React.useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = React.useState(false);
   const [showResultSheet, setShowResultSheet] = React.useState(false);
+
+  const sessionActiveRef = React.useRef(false);
+  const stageRef = React.useRef<typeof stage>("idle");
   const silenceSinceRef = React.useRef<number | null>(null);
   const autoStoppedRef = React.useRef(false);
+  const mockListenTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wasSpeakingRef = React.useRef(false);
+
   const pulseScale = React.useRef(new Animated.Value(1)).current;
   const pulseY = React.useRef(new Animated.Value(0)).current;
   const listeningPulse = React.useRef(new Animated.Value(0)).current;
   const sheetY = React.useRef(new Animated.Value(280)).current;
+  const sessionGlow = React.useRef(new Animated.Value(0)).current;
   const pulseLoopRef = React.useRef<Animated.CompositeAnimation | null>(null);
   const listeningLoopRef = React.useRef<Animated.CompositeAnimation | null>(null);
   const player = useAudioPlayer(audioUri ? { uri: audioUri } : null);
 
-  React.useEffect(() => {
-    loadPrefs();
-  }, []);
+  // Keep refs in sync with state — used by async callbacks (auto-restart, VAD).
+  React.useEffect(() => { sessionActiveRef.current = sessionActive; }, [sessionActive]);
+  React.useEffect(() => { stageRef.current = stage; }, [stage]);
 
+  React.useEffect(() => { loadPrefs(); }, []);
+
+  // Poll the audio player so we can pivot mascot state on TTS playback.
   React.useEffect(() => {
     const id = setInterval(() => {
       const playing = Boolean((player as any)?.playing);
@@ -72,6 +89,7 @@ export default function VoiceScreen() {
     return () => clearInterval(id);
   }, [player]);
 
+  // Mascot pulse loop only while Chingu is actively speaking.
   React.useEffect(() => {
     if (isSpeaking) {
       pulseLoopRef.current?.stop();
@@ -97,6 +115,21 @@ export default function VoiceScreen() {
     }
   }, [isSpeaking, pulseScale, pulseY]);
 
+  // Auto-restart listening when Chingu finishes speaking (the heart of the
+  // continuous ChatGPT-style loop). Triggers only when the session is still
+  // active and we just transitioned from playing → not-playing.
+  React.useEffect(() => {
+    const wasSpeaking = wasSpeakingRef.current;
+    wasSpeakingRef.current = isSpeaking;
+    if (wasSpeaking && !isSpeaking && sessionActiveRef.current) {
+      // Tiny gap so the player teardown completes before we open the mic again.
+      setTimeout(() => {
+        if (sessionActiveRef.current && stageRef.current !== "recording") start();
+      }, 250);
+    }
+  }, [isSpeaking]);
+
+  // Start audio playback once the TTS URI is set.
   React.useEffect(() => {
     if (audioUri && player) {
       player.seekTo(0);
@@ -105,6 +138,7 @@ export default function VoiceScreen() {
     }
   }, [audioUri, player]);
 
+  // Animated listening rings + waveform driver.
   React.useEffect(() => {
     const isListening = stage === "recording";
     if (isListening) {
@@ -124,23 +158,42 @@ export default function VoiceScreen() {
     }
   }, [stage, listeningPulse]);
 
+  // Soft session-active glow behind the mascot.
+  React.useEffect(() => {
+    Animated.timing(sessionGlow, {
+      toValue: sessionActive ? 1 : 0,
+      duration: 320,
+      useNativeDriver: true,
+    }).start();
+  }, [sessionActive, sessionGlow]);
+
+  // Slide the result sheet on translation update.
   React.useEffect(() => {
     if (translated.trim()) {
       setShowResultSheet(true);
       Animated.timing(sheetY, { toValue: 0, duration: 280, useNativeDriver: true }).start();
-    } else {
+    } else if (!sessionActive && !transcript.trim()) {
       setShowResultSheet(false);
       Animated.timing(sheetY, { toValue: 280, duration: 220, useNativeDriver: true }).start();
     }
-  }, [translated, sheetY]);
+  }, [translated, sessionActive, transcript, sheetY]);
 
-  const start = async () => {
+  // ─────────── Lifecycle helpers ───────────
+  const clearMockListenTimer = () => {
+    if (mockListenTimerRef.current) {
+      clearTimeout(mockListenTimerRef.current);
+      mockListenTimerRef.current = null;
+    }
+  };
+
+  const start = React.useCallback(async () => {
     try {
       setError(null);
       if (!MOCK_WEB) {
         const s = await AudioModule.requestRecordingPermissionsAsync();
         if (!s.granted) {
           setError("Microphone permission denied.");
+          setSessionActive(false);
           return;
         }
         await AudioModule.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
@@ -148,16 +201,30 @@ export default function VoiceScreen() {
         recorder.record();
       }
       setStage("recording");
+      silenceSinceRef.current = null;
+      autoStoppedRef.current = false;
+      // Reset per-turn fields but keep the previous translation visible in the
+      // sheet so the user can still read it while the next turn is captured.
       setTranscript("");
       setTranslated("");
-      setShowResultSheet(false);
-      if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      // Web mock: simulate VAD by auto-stopping after a short listening window.
+      if (MOCK_WEB) {
+        clearMockListenTimer();
+        mockListenTimerRef.current = setTimeout(() => {
+          if (sessionActiveRef.current && stageRef.current === "recording") stop();
+        }, MOCK_LISTEN_MS);
+      }
     } catch (e: any) {
       setError(e?.message || "Failed to start voice input.");
+      setSessionActive(false);
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recorder]);
 
   const stop = React.useCallback(async () => {
+    clearMockListenTimer();
     try {
       setStage("processing");
       let b64 = "";
@@ -166,8 +233,9 @@ export default function VoiceScreen() {
         await recorder.stop();
         const uri = recorder.uri;
         if (!uri) {
-          setError("No recording captured.");
-          setStage("idle");
+          // Lost the recording → reset back into listening if the session is alive.
+          if (sessionActiveRef.current) start();
+          else setStage("idle");
           return;
         }
         try {
@@ -186,7 +254,9 @@ export default function VoiceScreen() {
       if (typeof (stt as any).credits === "number") await setCredits((stt as any).credits);
       setTranscript(stt.text || "");
       if (!stt.text?.trim()) {
-        setStage("done");
+        // Silent / empty turn → if session is still active, listen again.
+        if (sessionActiveRef.current) start();
+        else setStage("idle");
         return;
       }
 
@@ -210,31 +280,38 @@ export default function VoiceScreen() {
       } catch {
         // non-blocking
       }
-      if (prefs.autoVoiceReply && tr.translated_text?.trim()) {
-        try {
-          const t = await api.tts({ text: tr.translated_text, target_lang: prefs.to, app_locale: prefs.appLang });
-          if (typeof (t as any).credits === "number") await setCredits((t as any).credits);
-          setAudioUri(`data:${t.mime};base64,${t.audio_base64}`);
-        } catch {
-          setError("Could not play audio reply.");
-        }
+      // Continuous loop ALWAYS plays the spoken reply, regardless of the
+      // autoVoiceReply preference, because the loop closes on audio-end.
+      try {
+        const t = await api.tts({ text: tr.translated_text, target_lang: prefs.to, app_locale: prefs.appLang });
+        if (typeof (t as any).credits === "number") await setCredits((t as any).credits);
+        setAudioUri(`data:${t.mime};base64,${t.audio_base64}`);
+      } catch {
+        setError("Could not play audio reply.");
+        // Audio failed — still try to keep the session alive.
+        if (sessionActiveRef.current) setTimeout(() => { if (sessionActiveRef.current) start(); }, 600);
       }
       setStage("done");
     } catch (e: any) {
       setError(e?.message || "Voice processing failed.");
       setStage("idle");
+      setSessionActive(false);
     }
-  }, [recorder, prefs.from, prefs.to, prefs.autoVoiceReply, prefs.appLang]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recorder, prefs.from, prefs.to, prefs.appLang]);
 
+  // Native VAD: while listening with an active session, watch the meter and
+  // auto-stop after SILENCE_HOLD_MS of sustained quiet.
   React.useEffect(() => {
-    if (!prefs.handsFree || stage !== "recording") {
+    if (MOCK_WEB) return;
+    if (!sessionActive || stage !== "recording") {
       silenceSinceRef.current = null;
       autoStoppedRef.current = false;
       return;
     }
     const metering = recorderState?.metering;
     if (typeof metering !== "number") return;
-    const isSilent = metering < -45;
+    const isSilent = metering < SILENCE_DBFS;
     if (!isSilent) {
       silenceSinceRef.current = null;
       autoStoppedRef.current = false;
@@ -245,51 +322,69 @@ export default function VoiceScreen() {
       return;
     }
     const silentMs = Date.now() - silenceSinceRef.current;
-    if (silentMs >= 3000 && !autoStoppedRef.current) {
+    if (silentMs >= SILENCE_HOLD_MS && !autoStoppedRef.current) {
       autoStoppedRef.current = true;
       stop();
     }
-  }, [prefs.handsFree, stage, recorderState?.metering, stop]);
+  }, [sessionActive, stage, recorderState?.metering, stop]);
 
-  const replay = async () => {
-    if (audioUri && player) {
-      player.seekTo(0);
-      player.play();
-      return;
-    }
-    if (!translated.trim()) return;
+  const endSession = React.useCallback(async () => {
+    setSessionActive(false);
+    clearMockListenTimer();
     try {
-      const t = await api.tts({ text: translated, target_lang: prefs.to, app_locale: prefs.appLang });
-      if (typeof (t as any).credits === "number") await setCredits((t as any).credits);
-      setAudioUri(`data:${t.mime};base64,${t.audio_base64}`);
+      if (!MOCK_WEB && stageRef.current === "recording") await recorder.stop();
     } catch {
-      setError("Unable to replay audio.");
+      // ignore
     }
-  };
-
-  const reset = () => {
+    try { player?.pause?.(); } catch { /* noop */ }
     setStage("idle");
-    setTranscript("");
-    setTranslated("");
-    setAudioUri(null);
-    setError(null);
-    setShowResultSheet(false);
     setIsSpeaking(false);
-  };
+  }, [recorder, player]);
+
+  const onMascotTap = React.useCallback(() => {
+    if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (sessionActiveRef.current) {
+      endSession();
+    } else {
+      setSessionActive(true);
+      // Kick off the first listening turn.
+      start();
+    }
+  }, [endSession, start]);
+
+  React.useEffect(() => {
+    return () => {
+      clearMockListenTimer();
+      try { recorder.stop(); } catch { /* noop */ }
+      try { player?.pause?.(); } catch { /* noop */ }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const recording = stage === "recording";
   const processing = stage === "processing";
-  const done = stage === "done";
   const ringScaleA = listeningPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.45] });
   const ringScaleB = listeningPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.75] });
   const ringOpacityA = listeningPulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] });
   const ringOpacityB = listeningPulse.interpolate({ inputRange: [0, 1], outputRange: [0.28, 0] });
+  const glowOpacity = sessionGlow.interpolate({ inputRange: [0, 1], outputRange: [0, 0.55] });
+  const glowScale = sessionGlow.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1.1] });
+
+  const statusText = !sessionActive
+    ? "Tap Chingu to start the live chat"
+    : recording
+      ? "Listening... talk to me 👂"
+      : processing
+        ? "Cooking up a reply..."
+        : isSpeaking
+          ? "Chingu is roasting you..."
+          : "Your turn — go on";
 
   return (
     <View style={styles.root}>
       <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
         <View style={styles.header}>
-          <TouchableOpacity testID="voice-back-button" style={styles.topIcon} onPress={() => reset()}>
+          <TouchableOpacity testID="voice-back-button" style={styles.topIcon} onPress={endSession}>
             <Ionicons name="chevron-back" size={22} color={theme.text} />
           </TouchableOpacity>
           <Text style={styles.title}>Live Voice Chat</Text>
@@ -299,6 +394,12 @@ export default function VoiceScreen() {
         </View>
 
         <View style={styles.centerArea}>
+          {/* Soft halo that breathes only while the session is active */}
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.sessionGlow, { opacity: glowOpacity, transform: [{ scale: glowScale }] }]}
+          />
+
           {recording && (
             <>
               <Animated.View style={[styles.waveRing, { transform: [{ scale: ringScaleA }], opacity: ringOpacityA }]} />
@@ -306,12 +407,20 @@ export default function VoiceScreen() {
             </>
           )}
 
-          <Animated.View
-            style={{ transform: [{ scale: pulseScale }, { translateY: pulseY }] }}
-            testID="voice-main-mascot"
+          <TouchableOpacity
+            testID={sessionActive ? "voice-mascot-stop" : "voice-mascot-start"}
+            activeOpacity={0.85}
+            onPress={onMascotTap}
+            accessibilityRole="button"
+            accessibilityLabel={sessionActive ? "End live voice chat" : "Start live voice chat"}
           >
-            <Image source={isSpeaking ? chinguActiveMascot : chinguIdleMascot} style={styles.mainMascot} />
-          </Animated.View>
+            <Animated.View
+              style={{ transform: [{ scale: pulseScale }, { translateY: pulseY }] }}
+              testID="voice-main-mascot"
+            >
+              <Image source={isSpeaking ? chinguActiveMascot : chinguIdleMascot} style={styles.mainMascot} />
+            </Animated.View>
+          </TouchableOpacity>
 
           {recording && (
             <View style={styles.waveformRow} testID="voice-waveform">
@@ -336,59 +445,31 @@ export default function VoiceScreen() {
             </View>
           )}
 
-          <Text style={styles.statusText} testID="voice-status-text">
-            {recording
-              ? "Chingu Speak is listening..."
-              : processing
-                ? "Processing speech..."
-                : isSpeaking
-                  ? "Chingu is speaking..."
-                  : done
-                    ? "Tap mic to keep chatting"
-                    : "Tap mic to start immersive voice mode"}
-          </Text>
-        </View>
-
-        <View style={styles.controls}>
-          {done && (
-            <TouchableOpacity testID="voice-replay-button" style={styles.actionBtn} onPress={replay}>
-              <Ionicons name="play" size={18} color={theme.primaryDeep} />
-              <Text style={styles.actionText}>Replay</Text>
-            </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            testID={recording ? "voice-stop-button" : "voice-start-button"}
-            activeOpacity={0.9}
-            onPress={recording ? stop : start}
-            disabled={processing}
-          >
-            <LinearGradient colors={recording ? ["#EF4444", "#F97316"] : ["#8B5CF6", "#EC4899"]} style={styles.mainMic}>
-              {processing ? <ActivityIndicator color="#fff" size="large" /> : <Ionicons name={recording ? "stop" : "mic"} size={42} color="#fff" />}
-            </LinearGradient>
-          </TouchableOpacity>
-          {done && (
-            <TouchableOpacity testID="voice-new-button" style={styles.actionBtn} onPress={reset}>
-              <Ionicons name="refresh" size={18} color={theme.primaryDeep} />
-              <Text style={styles.actionText}>Clear</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-
-        <Animated.View style={[styles.resultSheet, { transform: [{ translateY: sheetY }] }]} testID="voice-result-sheet">
-          <View style={styles.resultHandle} />
-          <View style={styles.resultHeader}>
-            <Image source={heartIcon} style={styles.heartIcon} />
-            <Text style={styles.resultTitle}>CHINGU TRANSLATION RESULT</Text>
-          </View>
-          {transcript.trim() ? (
-            <View style={styles.transcriptBlock} testID="voice-transcript-block">
-              <Text style={styles.transcriptLabel}>YOU SAID</Text>
-              <Text style={styles.transcriptText} testID="voice-transcript-text">{transcript}</Text>
-            </View>
+          <Text style={styles.statusText} testID="voice-status-text">{statusText}</Text>
+          {sessionActive ? (
+            <Text style={styles.hintText} testID="voice-hint-text">Tap Chingu again to end</Text>
           ) : null}
-          <Text style={styles.resultBody} testID="voice-result-text">{translated || transcript || "Your translated result appears here."}</Text>
-          {!!error && <Text style={styles.error}>{error}</Text>}
-        </Animated.View>
+        </View>
+
+        {(showResultSheet || transcript.trim() || translated.trim()) ? (
+          <Animated.View style={[styles.resultSheet, { transform: [{ translateY: sheetY }] }]} testID="voice-result-sheet">
+            <View style={styles.resultHandle} />
+            <View style={styles.resultHeader}>
+              <Image source={heartIcon} style={styles.heartIcon} />
+              <Text style={styles.resultTitle}>CHINGU TRANSLATION RESULT</Text>
+            </View>
+            {transcript.trim() ? (
+              <View style={styles.transcriptBlock} testID="voice-transcript-block">
+                <Text style={styles.transcriptLabel}>YOU SAID</Text>
+                <Text style={styles.transcriptText} testID="voice-transcript-text">{transcript}</Text>
+              </View>
+            ) : null}
+            <Text style={styles.resultBody} testID="voice-result-text">
+              {translated || transcript || "Your translated result will appear here."}
+            </Text>
+            {!!error && <Text style={styles.error}>{error}</Text>}
+          </Animated.View>
+        ) : null}
       </SafeAreaView>
     </View>
   );
@@ -399,6 +480,7 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 16,
     paddingTop: 6,
+    paddingBottom: 4,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -420,60 +502,44 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     position: "relative",
   },
-  waveRing: {
+  sessionGlow: {
     position: "absolute",
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    borderWidth: 2,
-    borderColor: "rgba(236,72,153,0.45)",
+    width: 320,
+    height: 320,
+    borderRadius: 160,
+    backgroundColor: "#F3EBFF",
   },
-  waveRingSoft: {
+  waveRing: {
     position: "absolute",
     width: 220,
     height: 220,
     borderRadius: 110,
     borderWidth: 2,
+    borderColor: "rgba(236,72,153,0.45)",
+  },
+  waveRingSoft: {
+    position: "absolute",
+    width: 250,
+    height: 250,
+    borderRadius: 125,
+    borderWidth: 2,
     borderColor: "rgba(139,92,246,0.35)",
   },
-  mainMascot: { width: 210, height: 210, resizeMode: "contain" },
+  mainMascot: { width: 220, height: 220, resizeMode: "contain" },
   statusText: {
-    color: "#3F384F",
-    fontSize: 13,
-    marginTop: 12,
+    color: "#1F1A2E",
+    fontSize: 15,
+    marginTop: 14,
     textAlign: "center",
-    fontWeight: "700",
+    fontWeight: "800",
   },
-  controls: {
-    paddingBottom: 30,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 14,
+  hintText: {
+    color: "#8B7AA6",
+    fontSize: 12,
+    marginTop: 4,
+    textAlign: "center",
+    fontWeight: "600",
   },
-  mainMic: {
-    width: 98,
-    height: 98,
-    borderRadius: 49,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#EC4899",
-    shadowOpacity: 0.45,
-    shadowRadius: 24,
-    elevation: 12,
-  },
-  actionBtn: {
-    backgroundColor: "#F5F1FF",
-    borderWidth: 1,
-    borderColor: "#E7E0F5",
-    borderRadius: 999,
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  actionText: { color: "#7C3AED", fontSize: 13, fontWeight: "800" },
   resultSheet: {
     position: "absolute",
     left: 0,
