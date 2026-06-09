@@ -135,11 +135,15 @@ export const mocks = {
 
   chat: async (body: { session_id: string; message: string }): Promise<ChatResult> => {
     await delay(500 + Math.random() * 300);
+    // Sarcastic-best-friend persona — supportive but rib-tickling.
     const replies = [
-      "That's a great question! Let me explain it in your target language.",
-      "Sure! Here's how you'd say that naturally.",
-      "I love your curiosity! Let's practice that phrase together.",
-      "Nice try! A more natural way to say it would be…",
+      "Aigoo, that pronunciation just gave my circuits a headache 😅 — try slowing down. You almost said something totally different. Almost cute though.",
+      "Listen friend, I love you, but that grammar… my grandma's grandma is rolling in her hanbok right now. Let me show you the proper way.",
+      "Oh wow, brave choice mixing those particles like that. Bold. Wrong. But bold. Here, repeat after me — and please, this time, with feeling.",
+      "Not bad! Only mildly tragic. Like a K-drama with a budget. You're getting closer — one more try and I might actually stop laughing.",
+      "Okay okay, I won't roast you this time. (Yes I will.) That came out cuter than intended though, so… progress? Try it again, properly.",
+      "친구야, that was so confidently wrong it deserves a small award 🏆. Adorable. Now let's fix it before native speakers cry.",
+      "Hmm, that's a creative interpretation of Korean. Very… avant-garde. Anyway, here's how a non-alien would say it.",
     ];
     return {
       session_id: body.session_id,

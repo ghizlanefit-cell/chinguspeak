@@ -60,7 +60,7 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="index"     options={{ title: "Home",      tabBarIcon: ({ color }) => <Ionicons name="home"   size={22} color={color} /> }} />
       <Tabs.Screen name="translate" options={{ title: "Translate", tabBarIcon: ({ color }) => <Feather  name="globe"  size={22} color={color} /> }} />
-      <Tabs.Screen name="voice"     options={{ title: "", tabBarIcon: () => <View style={{ width: 1, height: 1 }} />, tabBarButton: () => <FloatingMic /> }} />
+      <Tabs.Screen name="voice"     options={{ title: "", tabBarIcon: () => <View style={{ width: 1, height: 1 }} />, tabBarButton: () => <FloatingMic />, tabBarStyle: { display: "none" } }} />
       <Tabs.Screen name="saved"     options={{ title: "Saved",     tabBarIcon: ({ color }) => <Ionicons name="bookmark" size={22} color={color} /> }} />
       <Tabs.Screen name="profile"   options={{ title: "Profile",   tabBarIcon: ({ color }) => <Ionicons name="person-circle-outline" size={24} color={color} /> }} />
     </Tabs>

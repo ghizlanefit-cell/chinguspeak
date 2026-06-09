@@ -18,7 +18,7 @@ import * as Haptics from "expo-haptics";
 
 import { api } from "@/src/api/client";
 import { usePrefs, swapLangs, loadPrefs, bumpStreak, setCredits } from "@/src/state/prefs";
-import { chinguIdleMascot, chinguActiveMascot, heartIcon } from "@/src/theme";
+import { chinguIdleMascot, chinguActiveMascot, heartIcon, theme } from "@/src/theme";
 
 // Preview-only short-circuit: when running the Emergent web preview with
 // EXPO_PUBLIC_MOCK_API=1, there is no real microphone device available, so we
@@ -287,15 +287,14 @@ export default function VoiceScreen() {
 
   return (
     <View style={styles.root}>
-      <LinearGradient colors={["#090712", "#131020", "#201537"]} style={StyleSheet.absoluteFill} />
       <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
         <View style={styles.header}>
           <TouchableOpacity testID="voice-back-button" style={styles.topIcon} onPress={() => reset()}>
-            <Ionicons name="chevron-back" size={22} color="#fff" />
+            <Ionicons name="chevron-back" size={22} color={theme.text} />
           </TouchableOpacity>
           <Text style={styles.title}>Live Voice Chat</Text>
           <TouchableOpacity testID="voice-swap-langs" style={styles.topIcon} onPress={swapLangs}>
-            <Ionicons name="swap-horizontal" size={18} color="#fff" />
+            <Ionicons name="swap-horizontal" size={18} color={theme.text} />
           </TouchableOpacity>
         </View>
 
@@ -339,39 +338,38 @@ export default function VoiceScreen() {
 
           <Text style={styles.statusText} testID="voice-status-text">
             {recording
-              ? "Listening with Deepgram Nova-2..."
+              ? "Chingu Speak is listening..."
               : processing
                 ? "Processing speech..."
                 : isSpeaking
                   ? "Chingu is speaking..."
                   : done
-                    ? "Voice cycle complete"
+                    ? "Tap mic to keep chatting"
                     : "Tap mic to start immersive voice mode"}
           </Text>
         </View>
 
         <View style={styles.controls}>
-          {done ? (
-            <>
-              <TouchableOpacity testID="voice-replay-button" style={styles.actionBtn} onPress={replay}>
-                <Ionicons name="play" size={18} color="#D7CCFF" />
-                <Text style={styles.actionText}>Replay</Text>
-              </TouchableOpacity>
-              <TouchableOpacity testID="voice-new-button" style={styles.actionBtn} onPress={reset}>
-                <Ionicons name="refresh" size={18} color="#D7CCFF" />
-                <Text style={styles.actionText}>New</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity
-              testID={recording ? "voice-stop-button" : "voice-start-button"}
-              activeOpacity={0.9}
-              onPress={recording ? stop : start}
-              disabled={processing}
-            >
-              <LinearGradient colors={recording ? ["#EF4444", "#F97316"] : ["#8B5CF6", "#EC4899"]} style={styles.mainMic}>
-                {processing ? <ActivityIndicator color="#fff" size="large" /> : <Ionicons name={recording ? "stop" : "mic"} size={42} color="#fff" />}
-              </LinearGradient>
+          {done && (
+            <TouchableOpacity testID="voice-replay-button" style={styles.actionBtn} onPress={replay}>
+              <Ionicons name="play" size={18} color={theme.primaryDeep} />
+              <Text style={styles.actionText}>Replay</Text>
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            testID={recording ? "voice-stop-button" : "voice-start-button"}
+            activeOpacity={0.9}
+            onPress={recording ? stop : start}
+            disabled={processing}
+          >
+            <LinearGradient colors={recording ? ["#EF4444", "#F97316"] : ["#8B5CF6", "#EC4899"]} style={styles.mainMic}>
+              {processing ? <ActivityIndicator color="#fff" size="large" /> : <Ionicons name={recording ? "stop" : "mic"} size={42} color="#fff" />}
+            </LinearGradient>
+          </TouchableOpacity>
+          {done && (
+            <TouchableOpacity testID="voice-new-button" style={styles.actionBtn} onPress={reset}>
+              <Ionicons name="refresh" size={18} color={theme.primaryDeep} />
+              <Text style={styles.actionText}>Clear</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -397,7 +395,7 @@ export default function VoiceScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: "#090712" },
+  root: { flex: 1, backgroundColor: "#FFFFFF" },
   header: {
     paddingHorizontal: 16,
     paddingTop: 6,
@@ -409,11 +407,13 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.12)",
+    backgroundColor: "#F5F1FF",
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#EFE8FC",
   },
-  title: { color: "#fff", fontSize: 22, fontWeight: "900" },
+  title: { color: "#1F1A2E", fontSize: 22, fontWeight: "900" },
   centerArea: {
     flex: 1,
     alignItems: "center",
@@ -426,7 +426,7 @@ const styles = StyleSheet.create({
     height: 200,
     borderRadius: 100,
     borderWidth: 2,
-    borderColor: "rgba(236,72,153,0.65)",
+    borderColor: "rgba(236,72,153,0.45)",
   },
   waveRingSoft: {
     position: "absolute",
@@ -434,11 +434,11 @@ const styles = StyleSheet.create({
     height: 220,
     borderRadius: 110,
     borderWidth: 2,
-    borderColor: "rgba(139,92,246,0.45)",
+    borderColor: "rgba(139,92,246,0.35)",
   },
   mainMascot: { width: 210, height: 210, resizeMode: "contain" },
   statusText: {
-    color: "#E8DEFF",
+    color: "#3F384F",
     fontSize: 13,
     marginTop: 12,
     textAlign: "center",
@@ -458,35 +458,40 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     shadowColor: "#EC4899",
-    shadowOpacity: 0.5,
+    shadowOpacity: 0.45,
     shadowRadius: 24,
     elevation: 12,
   },
   actionBtn: {
-    backgroundColor: "rgba(255,255,255,0.13)",
+    backgroundColor: "#F5F1FF",
     borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.16)",
+    borderColor: "#E7E0F5",
     borderRadius: 999,
     paddingVertical: 12,
-    paddingHorizontal: 22,
+    paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
   },
-  actionText: { color: "#EADFFF", fontSize: 13, fontWeight: "800" },
+  actionText: { color: "#7C3AED", fontSize: 13, fontWeight: "800" },
   resultSheet: {
     position: "absolute",
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#FAF6FF",
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 18,
     paddingTop: 10,
-    paddingBottom: 96,
+    paddingBottom: 28,
     borderWidth: 1,
     borderColor: "#EFE8FC",
+    shadowColor: "#7C3AED",
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: -6 },
+    elevation: 10,
   },
   resultHandle: {
     alignSelf: "center",
@@ -502,10 +507,10 @@ const styles = StyleSheet.create({
   resultBody: { color: "#1F1A2E", fontSize: 18, lineHeight: 26, marginTop: 6, fontWeight: "700" },
   transcriptBlock: {
     marginTop: 10,
-    marginBottom: 12,
+    marginBottom: 10,
     paddingBottom: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#F0EAFC",
+    borderBottomColor: "#EFE8FC",
   },
   transcriptLabel: {
     color: "#A78BFA",
