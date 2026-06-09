@@ -1,6 +1,9 @@
-const RAW_URL = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+// Resolution order:
+//   1. EXPO_PUBLIC_BACKEND_URL (explicit prod backend — e.g. Hostinger)
+//   2. window.location.origin (web fallback for local dev / Emergent preview)
+const RAW_URL = (process.env.EXPO_PUBLIC_BACKEND_URL || "").trim();
 const WEB_ORIGIN = typeof window !== "undefined" ? window.location.origin : "";
-const BASE_URL = (WEB_ORIGIN || RAW_URL).replace(/\/$/, "");
+const BASE_URL = (RAW_URL || WEB_ORIGIN).replace(/\/$/, "");
 export const API_BASE = `${BASE_URL}/api`;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
