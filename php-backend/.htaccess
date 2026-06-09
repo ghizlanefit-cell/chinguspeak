@@ -1,0 +1,23 @@
+RewriteEngine On
+RewriteBase /api/
+
+# Allow POST/PATCH/DELETE/OPTIONS for all routes (Hostinger LiteSpeed sometimes restricts)
+<LimitExcept GET POST PUT PATCH DELETE OPTIONS HEAD>
+  Require all denied
+</LimitExcept>
+
+# CORS preflight should be answered immediately by PHP
+RewriteCond %{REQUEST_METHOD} OPTIONS
+RewriteRule ^(.*)$ index.php [L]
+
+# Single front controller: every request that isn't a real file goes to index.php
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteRule ^(.*)$ index.php [QSA,L]
+
+# Preserve Authorization header (Apache/LiteSpeed strip it by default → JWT login breaks)
+RewriteCond %{HTTP:Authorization} ^(.*)
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%1]
+
+# NOTE: php_value directives removed — they crash on LiteSpeed/PHP-FPM (Hostinger).
+# Use .user.ini next to this file to bump upload/post limits instead.
