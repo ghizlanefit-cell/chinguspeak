@@ -1,0 +1,48 @@
+{
+  "cli": {
+    "version": ">=12.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "apk": {
+      "android": {
+        "buildType": "apk",
+        "image": "latest"
+      },
+      "distribution": "internal",
+      "channel": "preview",
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://linen-wolf-239815.hostingersite.com"
+      }
+    },
+    "preview": {
+      "extends": "apk",
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://linen-wolf-239815.hostingersite.com"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://linen-wolf-239815.hostingersite.com"
+      }
+    },
+    "production-apk": {
+      "android": {
+        "buildType": "apk",
+        "image": "latest"
+      },
+      "distribution": "internal",
+      "channel": "production",
+      "env": {
+        "EXPO_PUBLIC_BACKEND_URL": "https://linen-wolf-239815.hostingersite.com"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
