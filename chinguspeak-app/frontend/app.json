@@ -63,8 +63,7 @@
       "@react-native-community/datetimepicker"
     ],
     "experiments": {
-      "typedRoutes": true,
-      "baseUrl": "/mobile"
+      "typedRoutes": true
     },
     "extra": {
       "router": {},

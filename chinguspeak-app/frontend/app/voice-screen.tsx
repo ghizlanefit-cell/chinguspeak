@@ -20,6 +20,12 @@ import { api } from "@/src/api/client";
 import { usePrefs, swapLangs, loadPrefs, bumpStreak, setCredits } from "@/src/state/prefs";
 import { chinguIdleMascot, chinguActiveMascot, heartIcon } from "@/src/theme";
 
+// Preview-only short-circuit: when running the Emergent web preview with
+// EXPO_PUBLIC_MOCK_API=1, there is no real microphone device available, so we
+// skip the expo-audio recorder calls and just drive the mocked pipeline with
+// simulated timing. Native iOS/Android prod builds never hit this branch.
+const MOCK_WEB = process.env.EXPO_PUBLIC_MOCK_API === "1" && Platform.OS === "web";
+
 export default function VoiceScreen() {
   const prefs = usePrefs();
   const recorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
@@ -118,14 +124,16 @@ export default function VoiceScreen() {
   const start = async () => {
     try {
       setError(null);
-      const s = await AudioModule.requestRecordingPermissionsAsync();
-      if (!s.granted) {
-        setError("Microphone permission denied.");
-        return;
+      if (!MOCK_WEB) {
+        const s = await AudioModule.requestRecordingPermissionsAsync();
+        if (!s.granted) {
+          setError("Microphone permission denied.");
+          return;
+        }
+        await AudioModule.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        await recorder.prepareToRecordAsync();
+        recorder.record();
       }
-      await AudioModule.setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await recorder.prepareToRecordAsync();
-      recorder.record();
       setStage("recording");
       setTranscript("");
       setTranslated("");
@@ -139,15 +147,23 @@ export default function VoiceScreen() {
   const stop = React.useCallback(async () => {
     try {
       setStage("processing");
-      await recorder.stop();
-      const uri = recorder.uri;
-      if (!uri) {
-        setError("No recording captured.");
-        setStage("idle");
-        return;
+      let b64 = "";
+      let mime = "audio/mp4";
+      if (!MOCK_WEB) {
+        await recorder.stop();
+        const uri = recorder.uri;
+        if (!uri) {
+          setError("No recording captured.");
+          setStage("idle");
+          return;
+        }
+        try {
+          b64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" as any });
+        } catch (e) {
+          if (process.env.EXPO_PUBLIC_MOCK_API !== "1") throw e;
+        }
+        mime = uri.toLowerCase().endsWith(".m4a") ? "audio/m4a" : "audio/mp4";
       }
-      const b64 = await FileSystem.readAsStringAsync(uri, { encoding: "base64" as any });
-      const mime = uri.toLowerCase().endsWith(".m4a") ? "audio/m4a" : "audio/mp4";
       const stt = await api.transcribe({
         audio_base64: b64,
         mime_type: mime,

@@ -1,3 +1,13 @@
+// API client for the Chingu Speak mobile app.
+//
+// Resolution order for the backend base URL:
+//   1. window.location.origin (web build → same-domain /api, matches Hostinger prod layout)
+//   2. EXPO_PUBLIC_BACKEND_URL (native iOS/Android builds)
+//
+// When EXPO_PUBLIC_MOCK_API=1 (Emergent preview), every call short-circuits to
+// the canned responses in ./mocks so the UI can be developed without a live server.
+import { mocks, MOCK_API_ENABLED } from "./mocks";
+
 const RAW_URL = process.env.EXPO_PUBLIC_BACKEND_URL || "";
 const WEB_ORIGIN = typeof window !== "undefined" ? window.location.origin : "";
 const BASE_URL = (WEB_ORIGIN || RAW_URL).replace(/\/$/, "");
@@ -90,7 +100,8 @@ export type HistoryItem = {
   favorite: boolean;
 };
 
-export const api = {
+// ---------- Live (network) implementations ----------
+const live = {
   translate: (body: { text: string; source_lang: string; target_lang: string; app_locale?: string }) =>
     request<TranslateResult>("/translate", { method: "POST", body: JSON.stringify(body) }),
 
@@ -183,7 +194,6 @@ export const api = {
   toggleFavorite: (id: string) =>
     request<{ id: string; favorite: boolean }>(`/history/${id}/favorite`, { method: "POST" }),
 
-  // Admin
   adminLogin: (body: { username: string; password: string }) =>
     request<{ access_token: string; token_type: string }>("/admin/login", {
       method: "POST",
@@ -218,9 +228,6 @@ export const api = {
       headers: { Authorization: `Bearer ${token}` },
     }),
 
-  adminExportUrl: (token: string, kind: "translations" | "conversations", fmt: "json" | "csv") =>
-    `${API_BASE}/admin/export?kind=${kind}&fmt=${fmt}`,
-
   adminTriggerBuild: (token: string) =>
     request<{
       id: string;
@@ -245,7 +252,6 @@ export const api = {
       headers: { Authorization: `Bearer ${token}` },
     }),
 
-  // User auth
   ping: () => request<{ status: string; service?: string; ts?: string }>("/ping"),
 
   deleteAccount: (token: string | null) =>
@@ -258,8 +264,81 @@ export const api = {
     request<{ access_token: string; user: { id: string; email: string; name?: string; credits?: number; is_pro?: boolean } }>(
       "/auth/register", { method: "POST", body: JSON.stringify(body) },
     ),
+
   login: (body: { email: string; password: string }) =>
     request<{ access_token: string; user: { id: string; email: string; name?: string; credits?: number; is_pro?: boolean } }>(
       "/auth/login", { method: "POST", body: JSON.stringify(body) },
     ),
+};
+
+// Exported api surface. When MOCK_API_ENABLED, every method is routed through
+// ./mocks; otherwise the live network implementations are used. The signatures
+// stay identical so consumer code (voice-screen, chat, translate, etc.) is
+// unchanged either way.
+export const api = {
+  translate: (...args: Parameters<typeof live.translate>) =>
+    MOCK_API_ENABLED ? mocks.translate(args[0]) : live.translate(...args),
+  translateImage: (...args: Parameters<typeof live.translateImage>) =>
+    MOCK_API_ENABLED ? mocks.translateImage(args[0]) : live.translateImage(...args),
+  transcribe: (...args: Parameters<typeof live.transcribe>) =>
+    MOCK_API_ENABLED ? mocks.transcribe(args[0]) : live.transcribe(...args),
+  tts: (...args: Parameters<typeof live.tts>) =>
+    MOCK_API_ENABLED ? mocks.tts() : live.tts(...args),
+  chat: (...args: Parameters<typeof live.chat>) =>
+    MOCK_API_ENABLED ? mocks.chat(args[0]) : live.chat(...args),
+  creditsMe: (...args: Parameters<typeof live.creditsMe>) =>
+    MOCK_API_ENABLED ? mocks.creditsMe() : live.creditsMe(...args),
+  rewardCredits: (...args: Parameters<typeof live.rewardCredits>) =>
+    MOCK_API_ENABLED ? mocks.rewardCredits() : live.rewardCredits(...args),
+  creditEvents: (...args: Parameters<typeof live.creditEvents>) =>
+    MOCK_API_ENABLED ? mocks.creditEvents() : live.creditEvents(...args),
+  verifySubscription: (...args: Parameters<typeof live.verifySubscription>) =>
+    MOCK_API_ENABLED ? mocks.verifySubscription() : live.verifySubscription(...args),
+  streakStatus: (...args: Parameters<typeof live.streakStatus>) =>
+    MOCK_API_ENABLED ? mocks.streakStatus() : live.streakStatus(...args),
+  streakClaim: (...args: Parameters<typeof live.streakClaim>) =>
+    MOCK_API_ENABLED ? mocks.streakClaim() : live.streakClaim(...args),
+  moduleContent: (...args: Parameters<typeof live.moduleContent>) =>
+    MOCK_API_ENABLED ? mocks.moduleContent(args[0]) : live.moduleContent(...args),
+  publicSettings: () =>
+    MOCK_API_ENABLED ? mocks.publicSettings() : live.publicSettings(),
+  chatHistory: (session_id: string) =>
+    MOCK_API_ENABLED ? mocks.chatHistory(session_id) : live.chatHistory(session_id),
+  clearChat: (session_id: string) =>
+    MOCK_API_ENABLED ? mocks.clearChat() : live.clearChat(session_id),
+  saveHistory: (...args: Parameters<typeof live.saveHistory>) =>
+    MOCK_API_ENABLED ? mocks.saveHistory(args[0]) : live.saveHistory(...args),
+  listHistory: () =>
+    MOCK_API_ENABLED ? mocks.listHistory() : live.listHistory(),
+  deleteHistory: (id: string) =>
+    MOCK_API_ENABLED ? mocks.deleteHistory() : live.deleteHistory(id),
+  toggleFavorite: (id: string) =>
+    MOCK_API_ENABLED ? mocks.toggleFavorite(id) : live.toggleFavorite(id),
+  ping: () => MOCK_API_ENABLED ? mocks.ping() : live.ping(),
+  deleteAccount: (...args: Parameters<typeof live.deleteAccount>) =>
+    MOCK_API_ENABLED ? mocks.deleteAccount() : live.deleteAccount(...args),
+  register: (...args: Parameters<typeof live.register>) =>
+    MOCK_API_ENABLED ? mocks.register(args[0]) : live.register(...args),
+  login: (...args: Parameters<typeof live.login>) =>
+    MOCK_API_ENABLED ? mocks.login(args[0]) : live.login(...args),
+
+  // Admin (live or mocked)
+  adminLogin: (...args: Parameters<typeof live.adminLogin>) =>
+    MOCK_API_ENABLED ? mocks.adminLogin() : live.adminLogin(...args),
+  adminStats: (...args: Parameters<typeof live.adminStats>) =>
+    MOCK_API_ENABLED ? mocks.adminStats() : live.adminStats(...args),
+  adminConversations: (...args: Parameters<typeof live.adminConversations>) =>
+    MOCK_API_ENABLED ? mocks.adminConversations() : live.adminConversations(...args),
+  adminTranslations: (...args: Parameters<typeof live.adminTranslations>) =>
+    MOCK_API_ENABLED ? mocks.adminTranslations() : live.adminTranslations(...args),
+  adminDeleteConversation: (...args: Parameters<typeof live.adminDeleteConversation>) =>
+    MOCK_API_ENABLED ? mocks.adminDeleteConversation() : live.adminDeleteConversation(...args),
+  adminDeleteTranslation: (...args: Parameters<typeof live.adminDeleteTranslation>) =>
+    MOCK_API_ENABLED ? mocks.adminDeleteTranslation() : live.adminDeleteTranslation(...args),
+  adminExportUrl: (token: string, kind: "translations" | "conversations", fmt: "json" | "csv") =>
+    `${API_BASE}/admin/export?kind=${kind}&fmt=${fmt}&token=${encodeURIComponent(token)}`,
+  adminTriggerBuild: (...args: Parameters<typeof live.adminTriggerBuild>) =>
+    MOCK_API_ENABLED ? mocks.adminTriggerBuild() : live.adminTriggerBuild(...args),
+  adminRecentBuilds: (...args: Parameters<typeof live.adminRecentBuilds>) =>
+    MOCK_API_ENABLED ? mocks.adminRecentBuilds() : live.adminRecentBuilds(...args),
 };
