@@ -7,6 +7,7 @@ import {
   Platform,
   Image,
   Animated,
+  ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -25,8 +26,7 @@ import { chinguIdleMascot, chinguActiveMascot, heartIcon, theme } from "@/src/th
 const MOCK_WEB = process.env.EXPO_PUBLIC_MOCK_API === "1" && Platform.OS === "web";
 
 // Pingo-style waveform bars: each bar pulses on a different rhythm by
-// interpolating the same 0→1 listeningPulse value through different curves,
-// so the bars feel "alive" without needing 7 separate Animated.Value loops.
+// interpolating the same 0→1 listeningPulse value through different curves.
 const WAVEFORM_BARS: { input: number[]; output: number[] }[] = [
   { input: [0, 0.25, 0.5, 0.75, 1],  output: [0.35, 1.0, 0.5, 0.85, 0.35] },
   { input: [0, 0.2,  0.45, 0.7, 1],  output: [0.65, 0.35, 1.0, 0.45, 0.65] },
@@ -37,12 +37,20 @@ const WAVEFORM_BARS: { input: number[]; output: number[] }[] = [
   { input: [0, 0.15, 0.45, 0.7, 1],  output: [0.7,  0.4, 0.95, 0.45, 0.7] },
 ];
 
-// VAD silence threshold (dBFS) and required quiet window for auto-stop on native.
+// Three thinking dots — each bouncing on a different phase of the same loop.
+const THINKING_DOTS: { input: number[]; output: number[] }[] = [
+  { input: [0, 0.25, 0.5, 0.75, 1], output: [0, -10, 0, -4, 0] },
+  { input: [0, 0.25, 0.5, 0.75, 1], output: [0, -4, -10, 0, 0] },
+  { input: [0, 0.25, 0.5, 0.75, 1], output: [0, 0, -4, -10, 0] },
+];
+
 const SILENCE_DBFS = -45;
 const SILENCE_HOLD_MS = 2500;
-// On web preview there's no real recorder, so we simulate end-of-utterance
-// after a short listening window instead.
 const MOCK_LISTEN_MS = 1800;
+const MAX_LOG_TURNS = 8;
+const VISIBLE_LOG_TURNS = 3;
+
+type Turn = { id: string; user: string; chingu: string; ts: number };
 
 export default function VoiceScreen() {
   const prefs = usePrefs();
@@ -51,33 +59,33 @@ export default function VoiceScreen() {
 
   const [sessionActive, setSessionActive] = React.useState(false);
   const [stage, setStage] = React.useState<"idle" | "recording" | "processing" | "done">("idle");
-  const [transcript, setTranscript] = React.useState("");
-  const [translated, setTranslated] = React.useState("");
+  const [turns, setTurns] = React.useState<Turn[]>([]);
   const [error, setError] = React.useState<string | null>(null);
   const [audioUri, setAudioUri] = React.useState<string | null>(null);
   const [isSpeaking, setIsSpeaking] = React.useState(false);
-  const [showResultSheet, setShowResultSheet] = React.useState(false);
 
+  const sessionIdRef = React.useRef<string>("");
   const sessionActiveRef = React.useRef(false);
   const stageRef = React.useRef<typeof stage>("idle");
   const silenceSinceRef = React.useRef<number | null>(null);
   const autoStoppedRef = React.useRef(false);
   const mockListenTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const wasSpeakingRef = React.useRef(false);
+  const logScrollRef = React.useRef<ScrollView | null>(null);
 
   const pulseScale = React.useRef(new Animated.Value(1)).current;
   const pulseY = React.useRef(new Animated.Value(0)).current;
   const listeningPulse = React.useRef(new Animated.Value(0)).current;
-  const sheetY = React.useRef(new Animated.Value(280)).current;
+  const thinkingPulse = React.useRef(new Animated.Value(0)).current;
   const sessionGlow = React.useRef(new Animated.Value(0)).current;
   const pulseLoopRef = React.useRef<Animated.CompositeAnimation | null>(null);
   const listeningLoopRef = React.useRef<Animated.CompositeAnimation | null>(null);
+  const thinkingLoopRef = React.useRef<Animated.CompositeAnimation | null>(null);
+
   const player = useAudioPlayer(audioUri ? { uri: audioUri } : null);
 
-  // Keep refs in sync with state — used by async callbacks (auto-restart, VAD).
   React.useEffect(() => { sessionActiveRef.current = sessionActive; }, [sessionActive]);
   React.useEffect(() => { stageRef.current = stage; }, [stage]);
-
   React.useEffect(() => { loadPrefs(); }, []);
 
   // Poll the audio player so we can pivot mascot state on TTS playback.
@@ -115,14 +123,11 @@ export default function VoiceScreen() {
     }
   }, [isSpeaking, pulseScale, pulseY]);
 
-  // Auto-restart listening when Chingu finishes speaking (the heart of the
-  // continuous ChatGPT-style loop). Triggers only when the session is still
-  // active and we just transitioned from playing → not-playing.
+  // Auto-restart listening when Chingu finishes speaking (continuous loop).
   React.useEffect(() => {
     const wasSpeaking = wasSpeakingRef.current;
     wasSpeakingRef.current = isSpeaking;
     if (wasSpeaking && !isSpeaking && sessionActiveRef.current) {
-      // Tiny gap so the player teardown completes before we open the mic again.
       setTimeout(() => {
         if (sessionActiveRef.current && stageRef.current !== "recording") start();
       }, 250);
@@ -138,18 +143,13 @@ export default function VoiceScreen() {
     }
   }, [audioUri, player]);
 
-  // Animated listening rings + waveform driver.
+  // Listening rings + waveform driver.
   React.useEffect(() => {
-    const isListening = stage === "recording";
-    if (isListening) {
+    if (stage === "recording") {
       listeningLoopRef.current?.stop();
       listeningPulse.setValue(0);
       listeningLoopRef.current = Animated.loop(
-        Animated.timing(listeningPulse, {
-          toValue: 1,
-          duration: 1100,
-          useNativeDriver: true,
-        }),
+        Animated.timing(listeningPulse, { toValue: 1, duration: 1100, useNativeDriver: true }),
       );
       listeningLoopRef.current.start();
     } else {
@@ -157,6 +157,21 @@ export default function VoiceScreen() {
       listeningPulse.setValue(0);
     }
   }, [stage, listeningPulse]);
+
+  // Thinking-dots loop runs only during the processing stage.
+  React.useEffect(() => {
+    if (stage === "processing") {
+      thinkingLoopRef.current?.stop();
+      thinkingPulse.setValue(0);
+      thinkingLoopRef.current = Animated.loop(
+        Animated.timing(thinkingPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+      );
+      thinkingLoopRef.current.start();
+    } else {
+      thinkingLoopRef.current?.stop();
+      thinkingPulse.setValue(0);
+    }
+  }, [stage, thinkingPulse]);
 
   // Soft session-active glow behind the mascot.
   React.useEffect(() => {
@@ -167,18 +182,15 @@ export default function VoiceScreen() {
     }).start();
   }, [sessionActive, sessionGlow]);
 
-  // Slide the result sheet on translation update.
+  // Auto-scroll the chat log to the bottom whenever a new turn lands.
   React.useEffect(() => {
-    if (translated.trim()) {
-      setShowResultSheet(true);
-      Animated.timing(sheetY, { toValue: 0, duration: 280, useNativeDriver: true }).start();
-    } else if (!sessionActive && !transcript.trim()) {
-      setShowResultSheet(false);
-      Animated.timing(sheetY, { toValue: 280, duration: 220, useNativeDriver: true }).start();
+    if (turns.length > 0) {
+      // Defer to next frame so the new row is laid out before we scroll.
+      setTimeout(() => logScrollRef.current?.scrollToEnd?.({ animated: true }), 50);
     }
-  }, [translated, sessionActive, transcript, sheetY]);
+  }, [turns.length]);
 
-  // ─────────── Lifecycle helpers ───────────
+  // ────────────────── Lifecycle helpers ──────────────────
   const clearMockListenTimer = () => {
     if (mockListenTimerRef.current) {
       clearTimeout(mockListenTimerRef.current);
@@ -203,13 +215,7 @@ export default function VoiceScreen() {
       setStage("recording");
       silenceSinceRef.current = null;
       autoStoppedRef.current = false;
-      // Reset per-turn fields but keep the previous translation visible in the
-      // sheet so the user can still read it while the next turn is captured.
-      setTranscript("");
-      setTranslated("");
       if (Platform.OS !== "web") Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-      // Web mock: simulate VAD by auto-stopping after a short listening window.
       if (MOCK_WEB) {
         clearMockListenTimer();
         mockListenTimerRef.current = setTimeout(() => {
@@ -233,7 +239,6 @@ export default function VoiceScreen() {
         await recorder.stop();
         const uri = recorder.uri;
         if (!uri) {
-          // Lost the recording → reset back into listening if the session is alive.
           if (sessionActiveRef.current) start();
           else setStage("idle");
           return;
@@ -245,6 +250,7 @@ export default function VoiceScreen() {
         }
         mime = uri.toLowerCase().endsWith(".m4a") ? "audio/m4a" : "audio/mp4";
       }
+
       const stt = await api.transcribe({
         audio_base64: b64,
         mime_type: mime,
@@ -252,27 +258,36 @@ export default function VoiceScreen() {
         app_locale: prefs.appLang,
       });
       if (typeof (stt as any).credits === "number") await setCredits((stt as any).credits);
-      setTranscript(stt.text || "");
-      if (!stt.text?.trim()) {
-        // Silent / empty turn → if session is still active, listen again.
+      const userText = (stt.text || "").trim();
+      if (!userText) {
         if (sessionActiveRef.current) start();
         else setStage("idle");
         return;
       }
 
-      const tr = await api.translate({
-        text: stt.text,
-        source_lang: prefs.from,
-        target_lang: prefs.to,
+      // Conversational turn — Chingu replies in the practice language with the
+      // chaotic Pingo persona (configured in src/api/mocks.ts + php-backend).
+      const chat = await api.chat({
+        session_id: sessionIdRef.current,
+        message: userText,
+        practice_lang: prefs.to,
+        teach_style: "roast",
         app_locale: prefs.appLang,
       });
-      if (typeof (tr as any).credits === "number") await setCredits((tr as any).credits);
-      setTranslated(tr.translated_text);
+      if (typeof (chat as any).credits === "number") await setCredits((chat as any).credits);
+      const chinguText = (chat.reply || "").trim();
+
+      // Record turn into the rolling log (capped at MAX_LOG_TURNS).
+      setTurns(prev => {
+        const next = [...prev, { id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, user: userText, chingu: chinguText, ts: Date.now() }];
+        return next.length > MAX_LOG_TURNS ? next.slice(next.length - MAX_LOG_TURNS) : next;
+      });
+
       try {
         await api.saveHistory({
           kind: "voice",
-          source_text: stt.text,
-          translated_text: tr.translated_text,
+          source_text: userText,
+          translated_text: chinguText,
           source_lang: prefs.from,
           target_lang: prefs.to,
         });
@@ -280,15 +295,13 @@ export default function VoiceScreen() {
       } catch {
         // non-blocking
       }
-      // Continuous loop ALWAYS plays the spoken reply, regardless of the
-      // autoVoiceReply preference, because the loop closes on audio-end.
+
       try {
-        const t = await api.tts({ text: tr.translated_text, target_lang: prefs.to, app_locale: prefs.appLang });
+        const t = await api.tts({ text: chinguText, target_lang: prefs.to, app_locale: prefs.appLang });
         if (typeof (t as any).credits === "number") await setCredits((t as any).credits);
         setAudioUri(`data:${t.mime};base64,${t.audio_base64}`);
       } catch {
         setError("Could not play audio reply.");
-        // Audio failed — still try to keep the session alive.
         if (sessionActiveRef.current) setTimeout(() => { if (sessionActiveRef.current) start(); }, 600);
       }
       setStage("done");
@@ -300,8 +313,7 @@ export default function VoiceScreen() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recorder, prefs.from, prefs.to, prefs.appLang]);
 
-  // Native VAD: while listening with an active session, watch the meter and
-  // auto-stop after SILENCE_HOLD_MS of sustained quiet.
+  // Native VAD: while listening with an active session, watch the meter.
   React.useEffect(() => {
     if (MOCK_WEB) return;
     if (!sessionActive || stage !== "recording") {
@@ -333,9 +345,7 @@ export default function VoiceScreen() {
     clearMockListenTimer();
     try {
       if (!MOCK_WEB && stageRef.current === "recording") await recorder.stop();
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
     try { player?.pause?.(); } catch { /* noop */ }
     setStage("idle");
     setIsSpeaking(false);
@@ -346,8 +356,8 @@ export default function VoiceScreen() {
     if (sessionActiveRef.current) {
       endSession();
     } else {
+      sessionIdRef.current = `voice-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       setSessionActive(true);
-      // Kick off the first listening turn.
       start();
     }
   }, [endSession, start]);
@@ -375,10 +385,12 @@ export default function VoiceScreen() {
     : recording
       ? "Listening... talk to me 👂"
       : processing
-        ? "Cooking up a reply..."
+        ? "Chingu is thinking..."
         : isSpeaking
           ? "Chingu is roasting you..."
-          : "Your turn — go on";
+          : "Your turn — go on!";
+
+  const showSheet = sessionActive || turns.length > 0;
 
   return (
     <View style={styles.root}>
@@ -394,7 +406,6 @@ export default function VoiceScreen() {
         </View>
 
         <View style={styles.centerArea}>
-          {/* Soft halo that breathes only while the session is active */}
           <Animated.View
             pointerEvents="none"
             style={[styles.sessionGlow, { opacity: glowOpacity, transform: [{ scale: glowScale }] }]}
@@ -422,6 +433,7 @@ export default function VoiceScreen() {
             </Animated.View>
           </TouchableOpacity>
 
+          {/* Listening waveform — shown only while the mic is hot */}
           {recording && (
             <View style={styles.waveformRow} testID="voice-waveform">
               {WAVEFORM_BARS.map((bar, i) => (
@@ -430,14 +442,28 @@ export default function VoiceScreen() {
                   style={[
                     styles.waveBar,
                     {
-                      transform: [
-                        {
-                          scaleY: listeningPulse.interpolate({
-                            inputRange: bar.input,
-                            outputRange: bar.output,
-                          }),
-                        },
-                      ],
+                      transform: [{
+                        scaleY: listeningPulse.interpolate({ inputRange: bar.input, outputRange: bar.output }),
+                      }],
+                    },
+                  ]}
+                />
+              ))}
+            </View>
+          )}
+
+          {/* Thinking dots — bridge the gap between user stop and TTS start */}
+          {processing && (
+            <View style={styles.thinkingRow} testID="voice-thinking-dots">
+              {THINKING_DOTS.map((d, i) => (
+                <Animated.View
+                  key={i}
+                  style={[
+                    styles.thinkingDot,
+                    {
+                      transform: [{
+                        translateY: thinkingPulse.interpolate({ inputRange: d.input, outputRange: d.output }),
+                      }],
                     },
                   ]}
                 />
@@ -451,24 +477,46 @@ export default function VoiceScreen() {
           ) : null}
         </View>
 
-        {(showResultSheet || transcript.trim() || translated.trim()) ? (
-          <Animated.View style={[styles.resultSheet, { transform: [{ translateY: sheetY }] }]} testID="voice-result-sheet">
+        {showSheet ? (
+          <View style={styles.resultSheet} testID="voice-result-sheet">
             <View style={styles.resultHandle} />
             <View style={styles.resultHeader}>
               <Image source={heartIcon} style={styles.heartIcon} />
-              <Text style={styles.resultTitle}>CHINGU TRANSLATION RESULT</Text>
+              <Text style={styles.resultTitle}>CHINGU LIVE CHAT</Text>
+              {turns.length > 0 && (
+                <Text style={styles.turnCount} testID="voice-turn-count">{turns.length} TURN{turns.length === 1 ? "" : "S"}</Text>
+              )}
             </View>
-            {transcript.trim() ? (
-              <View style={styles.transcriptBlock} testID="voice-transcript-block">
-                <Text style={styles.transcriptLabel}>YOU SAID</Text>
-                <Text style={styles.transcriptText} testID="voice-transcript-text">{transcript}</Text>
-              </View>
-            ) : null}
-            <Text style={styles.resultBody} testID="voice-result-text">
-              {translated || transcript || "Your translated result will appear here."}
-            </Text>
+
+            {turns.length === 0 ? (
+              <Text style={styles.emptyHint} testID="voice-empty-hint">
+                Say something to Chingu — the conversation log will show up here.
+              </Text>
+            ) : (
+              <ScrollView
+                ref={logScrollRef}
+                style={styles.logScroll}
+                contentContainerStyle={styles.logContent}
+                showsVerticalScrollIndicator={false}
+                testID="voice-chat-log"
+              >
+                {turns.slice(-VISIBLE_LOG_TURNS).map((t) => (
+                  <View key={t.id} style={styles.turnBlock} testID={`voice-turn-${t.id}`}>
+                    <View style={styles.turnRow}>
+                      <Text style={styles.turnLabelUser}>YOU SAID</Text>
+                      <Text style={styles.turnTextUser}>{t.user}</Text>
+                    </View>
+                    <View style={[styles.turnRow, { marginTop: 6 }]}>
+                      <Text style={styles.turnLabelChingu}>CHINGU</Text>
+                      <Text style={styles.turnTextChingu}>{t.chingu}</Text>
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+
             {!!error && <Text style={styles.error}>{error}</Text>}
-          </Animated.View>
+          </View>
         ) : null}
       </SafeAreaView>
     </View>
@@ -486,125 +534,103 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   topIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 36, height: 36, borderRadius: 18,
     backgroundColor: "#F5F1FF",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#EFE8FC",
+    alignItems: "center", justifyContent: "center",
+    borderWidth: 1, borderColor: "#EFE8FC",
   },
   title: { color: "#1F1A2E", fontSize: 22, fontWeight: "900" },
-  centerArea: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    position: "relative",
-  },
+  centerArea: { flex: 1, alignItems: "center", justifyContent: "center", position: "relative" },
   sessionGlow: {
-    position: "absolute",
-    width: 320,
-    height: 320,
-    borderRadius: 160,
+    position: "absolute", width: 320, height: 320, borderRadius: 160,
     backgroundColor: "#F3EBFF",
   },
   waveRing: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    borderWidth: 2,
-    borderColor: "rgba(236,72,153,0.45)",
+    position: "absolute", width: 220, height: 220, borderRadius: 110,
+    borderWidth: 2, borderColor: "rgba(236,72,153,0.45)",
   },
   waveRingSoft: {
-    position: "absolute",
-    width: 250,
-    height: 250,
-    borderRadius: 125,
-    borderWidth: 2,
-    borderColor: "rgba(139,92,246,0.35)",
+    position: "absolute", width: 250, height: 250, borderRadius: 125,
+    borderWidth: 2, borderColor: "rgba(139,92,246,0.35)",
   },
   mainMascot: { width: 220, height: 220, resizeMode: "contain" },
-  statusText: {
-    color: "#1F1A2E",
-    fontSize: 15,
-    marginTop: 14,
-    textAlign: "center",
-    fontWeight: "800",
+
+  statusText: { color: "#1F1A2E", fontSize: 15, marginTop: 14, textAlign: "center", fontWeight: "800" },
+  hintText: { color: "#8B7AA6", fontSize: 12, marginTop: 4, textAlign: "center", fontWeight: "600" },
+
+  waveformRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 6, marginTop: 18, height: 44,
   },
-  hintText: {
-    color: "#8B7AA6",
-    fontSize: 12,
-    marginTop: 4,
-    textAlign: "center",
-    fontWeight: "600",
+  waveBar: { width: 5, height: 40, borderRadius: 3, backgroundColor: "#EC4899" },
+
+  thinkingRow: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: 10, marginTop: 18, height: 24,
   },
+  thinkingDot: {
+    width: 10, height: 10, borderRadius: 5,
+    backgroundColor: "#8B5CF6",
+  },
+
   resultSheet: {
     position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
+    left: 0, right: 0, bottom: 0,
     backgroundColor: "#FAF6FF",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 28,
-    borderWidth: 1,
-    borderColor: "#EFE8FC",
-    shadowColor: "#7C3AED",
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: -6 },
-    elevation: 10,
+    borderTopLeftRadius: 28, borderTopRightRadius: 28,
+    paddingHorizontal: 18, paddingTop: 10, paddingBottom: 28,
+    borderWidth: 1, borderColor: "#EFE8FC",
+    shadowColor: "#7C3AED", shadowOpacity: 0.12, shadowRadius: 18,
+    shadowOffset: { width: 0, height: -6 }, elevation: 10,
+    maxHeight: 320,
   },
   resultHandle: {
-    alignSelf: "center",
-    width: 64,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: "#E6DFFC",
-    marginBottom: 10,
+    alignSelf: "center", width: 64, height: 5, borderRadius: 3,
+    backgroundColor: "#E6DFFC", marginBottom: 10,
   },
-  resultHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+  resultHeader: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   heartIcon: { width: 24, height: 24, resizeMode: "contain" },
-  resultTitle: { color: "#8B5CF6", fontSize: 12, fontWeight: "900", letterSpacing: 0.4 },
-  resultBody: { color: "#1F1A2E", fontSize: 18, lineHeight: 26, marginTop: 6, fontWeight: "700" },
-  transcriptBlock: {
-    marginTop: 10,
-    marginBottom: 10,
-    paddingBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#EFE8FC",
+  resultTitle: { color: "#8B5CF6", fontSize: 12, fontWeight: "900", letterSpacing: 0.4, flex: 1 },
+  turnCount: {
+    color: "#A78BFA", fontSize: 10, fontWeight: "900", letterSpacing: 0.6,
+    backgroundColor: "#F0E8FF", borderRadius: 999,
+    paddingVertical: 3, paddingHorizontal: 8,
   },
-  transcriptLabel: {
-    color: "#A78BFA",
-    fontSize: 10,
-    fontWeight: "900",
-    letterSpacing: 0.6,
-    marginBottom: 4,
+
+  emptyHint: {
+    color: "#8B7AA6", fontStyle: "italic", fontSize: 13,
+    paddingVertical: 10, fontWeight: "500",
   },
-  transcriptText: {
-    color: "#6B6585",
-    fontSize: 14,
-    lineHeight: 20,
-    fontStyle: "italic",
-    fontWeight: "500",
+
+  logScroll: { flexGrow: 0, maxHeight: 230 },
+  logContent: { paddingBottom: 4 },
+
+  turnBlock: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "#EFE8FC",
+    marginBottom: 8,
   },
-  waveformRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    marginTop: 18,
-    height: 44,
+  turnRow: { flexDirection: "row", alignItems: "flex-start", gap: 8 },
+  turnLabelUser: {
+    color: "#A78BFA", fontSize: 10, fontWeight: "900", letterSpacing: 0.6,
+    width: 64, marginTop: 2,
   },
-  waveBar: {
-    width: 5,
-    height: 40,
-    borderRadius: 3,
-    backgroundColor: "#EC4899",
+  turnLabelChingu: {
+    color: "#EC4899", fontSize: 10, fontWeight: "900", letterSpacing: 0.6,
+    width: 64, marginTop: 2,
   },
-  error: { color: "#EF4444", marginTop: 10, fontSize: 12, fontWeight: "700" },
+  turnTextUser: {
+    color: "#6B6585", fontSize: 13, fontStyle: "italic", fontWeight: "500",
+    flex: 1, lineHeight: 18,
+  },
+  turnTextChingu: {
+    color: "#1F1A2E", fontSize: 15, fontWeight: "700",
+    flex: 1, lineHeight: 21,
+  },
+
+  error: { color: "#EF4444", marginTop: 8, fontSize: 12, fontWeight: "700" },
 });

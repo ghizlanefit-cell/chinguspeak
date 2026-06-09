@@ -134,20 +134,20 @@ export const mocks = {
   },
 
   chat: async (body: { session_id: string; message: string }): Promise<ChatResult> => {
-    await delay(450 + Math.random() * 250);
-    // Sarcastic best-friend Chingu — tight, speech-ready one-liners so the
-    // continuous voice loop (record → TTS → record again) never drags.
+    await delay(420 + Math.random() * 220);
+    // Chaotic Pingo-style Chingu — high drama, uppercase energy, Korean-heavy
+    // micro-roasts that end on an aggressive turn-invite. Hard cap ≤ 25 words.
     const replies = [
-      "Aigoo, that grammar — friend, no. Try again, slower.",
-      "Bold attempt. Wrong, but bold. Here, copy me: ...",
-      "친구야, native speakers just shivered. One more time!",
-      "Ooh, almost cute. Almost. Repeat after me — properly.",
-      "Confidently wrong. I love it. Now do it right.",
-      "Hmm. Creative. Avant-garde, even. Try it the human way.",
-      "K-drama villain energy, but the verb was off. Again!",
-      "Not bad, friend. Like a B-minus B-movie. Once more.",
-      "어이가 없네 — that particle does NOT belong there. Listen and repeat.",
-      "Solid try! Tiny roast: your tone went on holiday. Bring it back.",
+      "AIGOO! 진짜?! 내 귀가 아파!! That grammar is TRASH, friend!! 다시 말해봐!!",
+      "YAH!! Michyeosseo?! Where did that 받침 come from?! NO NO NO! Speak!!",
+      "JINJJAH?! 친구야!! My soul just LEFT my body!! 다시 한 번, 천천히!! GO!!",
+      "OMAIGAD!! 어이가 없네!! That particle does NOT belong there!! 말해봐!!",
+      "NO NO NO! Cleanly please!! K-drama villains are CRYING right now!! Again!!",
+      "AIGOO 친구야!! 그 발음 뭐야?! My ears are BLEEDING!! 한 번 더!! Speak!!",
+      "YAH!! 진짜?! That was BOLD!! BOLD AND WRONG!! Copy me — 다시!!",
+      "Michyeosseo?! 어휘 어디 갔어?! Confident, ALMOST cute, STILL wrong!! GO!!",
+      "OMAIGAD! 친구야!! Native speakers just SHIVERED!! Pick it back up!! 말해봐!!",
+      "JINJJAH?! Particle on holiday again!! BRING IT BACK!! 다시!! SPEAK!!",
     ];
     return {
       session_id: body.session_id,
