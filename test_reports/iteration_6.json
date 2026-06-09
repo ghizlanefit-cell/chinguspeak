@@ -1,0 +1,125 @@
+{
+  "summary": "Executed frontend-only hosted mobile regression for auth, chat, preferences, voice, and profile flows. Multiple requested features are not present in deployed UI build, and key mobile API integrations return 404 in browser console.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Auth Register",
+        "issue": "Register form does not show confirm-password field (and still shows Name field), so requested email+password+confirm-only flow is not implemented in deployed web mobile build.",
+        "selector": "[data-testid=\"auth-confirm-password\"]",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "Chat screen",
+        "issue": "Mic voice-input button testid is missing on deployed build; voice start/stop control not accessible via expected selector.",
+        "selector": "[data-testid=\"chat-voice-start\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Chat mascot image",
+        "issue": "Old external image usage still present (pexels-like source detected), not fully replaced with uploaded mascot.",
+        "selector": "img",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Preferences",
+        "issue": "Sassy Roast style option not present in deployed screen options.",
+        "selector": "[data-testid=\"style-roast\"]",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "Preferences",
+        "issue": "Auto Voice Reply toggle missing from deployed UI.",
+        "selector": "[data-testid=\"toggle-auto-voice-reply\"]",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "Profile",
+        "issue": "Avatar edit trigger missing in deployed UI.",
+        "selector": "[data-testid=\"profile-avatar-picker\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Icon rendering",
+        "issue": "Back/settings/mic icons render as missing glyphs due font decode errors, causing poor visibility/usability.",
+        "selector": "ionicons/feather glyphs across /mobile routes",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Mobile frontend -> API health",
+        "issue": "Frontend calls /api/ping and receives 404, indicating broken API base routing/integration for deployed mobile web build.",
+        "affected_selectors": [
+          "console: https://linen-wolf-239815.hostingersite.com/api/ping"
+        ]
+      },
+      {
+        "flow": "Chat history bootstrap",
+        "issue": "Chat history API request returns 404 from hosted build, breaking session/history integration.",
+        "affected_selectors": [
+          "console: /api/chat/{session}/history"
+        ]
+      },
+      {
+        "flow": "Voice hands-free validation",
+        "issue": "Could only verify voice start control presence; full 3s silence auto-stop behavior not conclusively validated in hosted web run.",
+        "affected_selectors": [
+          "[data-testid=\"voice-start-button\"]"
+        ]
+      },
+      {
+        "flow": "Teach-style propagation to PHP mobile chat",
+        "issue": "Could not verify end-to-end roast persona application from frontend because chat API integration is failing (404).",
+        "affected_selectors": [
+          "[data-testid=\"prefs-style\"]",
+          "chat send flow"
+        ]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Mobile auth/preferences/chat/profile",
+        "issues": [
+          "Multiple icons appear as blank tofu glyphs due broken icon font assets.",
+          "Some text/controls appear visually tiny and sparse in desktop viewport for mobile web export, reducing clarity."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/root/.emergent/automation_output/20260608_002456/console_20260608_002456.log",
+    "/root/.emergent/automation_output/20260608_002550/console_20260608_002550.log",
+    "/root/.emergent/automation_output/20260608_002624/console_20260608_002624.log",
+    "/root/.emergent/automation_output/20260608_002657/console_20260608_002657.log",
+    "/root/.emergent/automation_output/20260608_002701/console_20260608_002701.log"
+  ],
+  "action_items": [
+    "Redeploy the updated mobile web export; deployed UI currently does not match referenced source changes (confirm-password, roast, auto-voice-reply, avatar picker).",
+    "Fix mobile API base routing so /api/ping and /api/chat/* endpoints resolve (currently 404 from hosted mobile pages).",
+    "Fix Expo icon font asset serving in hosted /mobile build to restore visible back/settings/mic icons.",
+    "After integration fix, retest chat mic flow, 3s silence auto-stop, and teach_style roast persona behavior end-to-end."
+  ],
+  "critical_code_review_comments": [
+    "Source files include the requested features/testIDs, but hosted output behaves like stale or different build artifact; deployment parity is broken.",
+    "Frontend integration contract is currently violated in hosted environment (/api/ping and chat history 404), blocking validation of voice/chat behavior.",
+    "Icon font asset pipeline for Expo web export is broken in production, which directly impacts usability of core navigation and action controls."
+  ],
+  "updated_files": [
+    "/app/test_reports/iteration_6.json"
+  ],
+  "success_rate": {
+    "backend": "N/A (frontend-only scope)",
+    "frontend": "35%"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Use hosted URL https://linen-wolf-239815.hostingersite.com/mobile/*. Current deployed pages do not expose several new testIDs/features from source files. Verify deployment artifact freshness first, then rerun auth/chat/preferences/profile and voice integration checks.",
+  "rca of the issue": "Primary RCA appears to be deployment mismatch + broken hosting integration: (1) hosted mobile bundle is not reflecting latest source features, and (2) hosted mobile app API calls are routed to missing endpoints (/api/ping, /api/chat/.../history -> 404). Secondary RCA: icon font files for Expo vector icons fail to decode on host, causing missing glyphs (per console logs).",
+  "test_credentials": "Read /app/memory/test_credentials.md successfully (admin credentials present only). No additional user credentials were provided/required for this frontend run.",
+  "mocked_api": "NO MOCKED APIS USED"
+}

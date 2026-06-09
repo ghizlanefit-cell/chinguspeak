@@ -1,0 +1,106 @@
+{
+  "theme": "dark",
+  "archetype": "Electric & Neon with Soft Luxury",
+  "description": "A Gemini-style AI translation mobile app with a dark-first foundation, vibrant pink/purple gradients, and selective glassmorphism. It features 3D visuals, floating UI elements, and a high-end futuristic feel.",
+  "colors": {
+    "background": "#0A0514",
+    "surface": "#160C28",
+    "surfaceGlass": "rgba(255, 255, 255, 0.06)",
+    "primary": "#FF2E93",
+    "primaryGradient": ["#FF2E93", "#8B5CF6", "#3B82F6"],
+    "secondary": "#00E5FF",
+    "text": "#FFFFFF",
+    "textMuted": "#9CA3AF",
+    "border": "rgba(255, 255, 255, 0.12)",
+    "success": "#10B981",
+    "error": "#EF4444",
+    "cardGradient": ["rgba(255, 46, 147, 0.1)", "rgba(139, 92, 246, 0.1)"]
+  },
+  "typography": {
+    "fontFamilyHeading": "Outfit",
+    "fontFamilyBody": "Plus Jakarta Sans",
+    "h1": "text-4xl font-black tracking-tight text-white",
+    "h2": "text-3xl font-bold tracking-tight text-white",
+    "h3": "text-xl font-bold text-white",
+    "body": "text-base font-normal text-gray-200",
+    "caption": "text-sm font-medium text-gray-400 tracking-wide"
+  },
+  "spacing": {
+    "screenPadding": 24,
+    "cardPadding": 20,
+    "itemGap": 16,
+    "borderRadius": {
+      "sm": 8,
+      "md": 16,
+      "lg": 24,
+      "xl": 32,
+      "pill": 9999
+    }
+  },
+  "components": {
+    "button": {
+      "primary": "bg-gradient-to-r from-[#FF2E93] to-[#8B5CF6] rounded-full py-4 px-8 items-center justify-center shadow-[0_8px_32px_rgba(255,46,147,0.3)]",
+      "glass": "bg-white/10 rounded-3xl p-4 border border-white/20",
+      "icon": "w-12 h-12 rounded-full bg-white/10 items-center justify-center border border-white/20"
+    },
+    "card": {
+      "glass": "bg-white/5 rounded-3xl p-5 border border-white/10 overflow-hidden",
+      "aiHighlight": "rounded-3xl p-5 border border-[#FF2E93]/40 bg-gradient-to-br from-[#FF2E93]/10 to-[#8B5CF6]/10"
+    },
+    "input": {
+      "standard": "bg-white/5 border border-white/10 rounded-2xl p-4 text-white placeholder-gray-400"
+    },
+    "bottomNav": {
+      "container": "absolute bottom-0 w-full flex-row justify-around items-center bg-[#0A0514]/90 pb-8 pt-4 px-6 border-t border-white/10",
+      "floatingMic": "w-16 h-16 rounded-full bg-gradient-to-r from-[#FF2E93] to-[#8B5CF6] items-center justify-center -top-8 shadow-[0_0_24px_rgba(255,46,147,0.5)] border-4 border-[#0A0514]"
+    }
+  },
+  "screens": {
+    "Onboarding": {
+      "layout": "Flex-1, center content. Hero background gradient. Big 3D orb image in center. Language flags (Korean, Moroccan Arabic, English, French) orbiting the orb. 'Get Started' full-width button at bottom.",
+      "features": ["3D Glass Orb", "Floating language emojis", "Pink/purple glowing aura"]
+    },
+    "Home": {
+      "layout": "Header with greeting 'Hi, Mahbub!' and Profile Avatar. Large 'Unlock Smart AI' card with gradient background. Grid of 4 quick action glass cards (Text, Camera, Voice, Chat Buddy). Recent History list. Bottom Tab Nav.",
+      "features": ["Quick Actions", "Glassmorphic Cards", "Floating center mic in Bottom Nav"]
+    },
+    "TextTranslation": {
+      "layout": "Top bar with From/To language selectors (pill shapes) and a swap icon. Large text input area. Output area in a glass card. Bottom tools (copy, speak, fullscreen, upload image).",
+      "features": ["Language Swap", "Image Upload/OCR button", "Rich text output"]
+    },
+    "VoiceTranslation": {
+      "layout": "Full screen dark glass with subtle pink gradient. Huge waveform animation in center. 'Speak Now I'm Listening' prompt. From/To pills at top. Cancel/Done buttons at bottom.",
+      "features": ["Live Waveform animation", "Gemini-style fast voice replay", "Glowing mic pulse"]
+    },
+    "ChatBuddy": {
+      "layout": "Chat interface. 3D Robot Avatar header. Chat bubbles: user (right, glass), bot (left, gradient). Input at bottom with mic and camera icons.",
+      "features": ["Pingo-style friendly persona", "Fun strong replies", "Practice language conversational mode"]
+    }
+  },
+  "media": {
+    "images": {
+      "3d_orb": "https://images.pexels.com/photos/28408917/pexels-photo-28408917.jpeg",
+      "3d_robot": "https://images.pexels.com/photos/36847299/pexels-photo-36847299.png",
+      "profile_avatar": "https://images.unsplash.com/photo-1534528741775-53994a69daeb?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w1MTMyMzN8MHwxfHNlYXJjaHwxfHxwcm9maWxlfGVufDB8fHx8MTcyNDA0OTYyNw&ixlib=rb-4.0.3&q=80&w=400",
+      "hero_background": "https://images.pexels.com/photos/28408920/pexels-photo-28408920.jpeg"
+    },
+    "icons": {
+      "instructions": "Use @expo/vector-icons (Ionicons or Feather). Use standard Emojis for flags (e.g., 🇰🇷, 🇲🇦, 🇺🇸, 🇫🇷)."
+    }
+  },
+  "animations": {
+    "orb_orbit": "Use React Native Reanimated to orbit language emojis around the center orb on Onboarding.",
+    "waveform": "Scale and opacity pulsing animations on bars for live voice feedback on Voice screen.",
+    "button_press": "Scale down to 0.95 on press in for tactile feedback."
+  },
+  "instructions_to_main_agent": [
+    "Use React Native Expo.",
+    "Implement glassmorphism using 'expo-blur' (BlurView).",
+    "Use 'expo-linear-gradient' for all pink/purple gradients.",
+    "For the floating bottom nav, ensure the nav container is position:'absolute', bottom:0. The central Mic button should be visually raised by negative margin/top.",
+    "Add 'testID' attributes to ALL interactive and key elements (e.g., testID='get-started-button', testID='mic-button', testID='language-selector').",
+    "Build a custom Chat UI for the AI Buddy (LingoBot). Use the '3d_robot' image as the bot's avatar.",
+    "Default languages should prominently feature Korean, Moroccan Arabic (Darija), English, and French.",
+    "Do NOT use placeholder images. Use the provided URLs in 'media'."
+  ]
+}

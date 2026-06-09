@@ -1,0 +1,369 @@
+name: Android APK (Tester Build) [DISABLED - using EAS Build instead]
+
+# Builds a sideloadable RELEASE APK from the Expo (React Native) frontend so
+# testers can install it directly without going through Google Play.
+#
+# *** DISABLED on 2026-06-05 ***
+# Self-hosted Gradle on GitHub-hosted runners kept failing (newArch + Reanimated 4
+# + R8 + AGP 8 produced 30+ min builds that crashed at random points). We switched
+# to EAS Build (Expo's hosted infra) which compiles in ~10 min on Expo's own
+# emulator-tuned machines. See /app/frontend/eas.json and run:
+#   EXPO_TOKEN=... npx eas-cli build --platform android --profile apk --non-interactive --no-wait --json
+#
+# To re-enable this fallback, switch the `on:` block back to push + workflow_dispatch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type (manual only — auto trigger disabled)'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
+
+env:
+  # Backend URL the APK should talk to. Override via repo secret EXPO_BACKEND_URL
+  # if you change deployments.
+  EXPO_PUBLIC_BACKEND_URL: ${{ secrets.EXPO_BACKEND_URL || 'https://chinguspeak-preview.preview.emergentagent.com' }}
+  BUILD_TYPE: ${{ github.event.inputs.build_type || 'release' }}
+
+jobs:
+  build-apk:
+    name: Build Android APK (Expo prebuild + Gradle)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # Cache intentionally disabled: the lockfile differs between
+          # local (yarn.lock) and the GitHub remote (package-lock.json).
+          # Caching is non-essential for a one-shot APK build and would
+          # fail the whole workflow if the file isn't found.
+
+      - name: Setup Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: latest
+
+      - name: Accept Android SDK licenses
+        run: yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+      - name: Write frontend .env (backend link)
+        working-directory: frontend
+        shell: bash
+        run: |
+          {
+            echo "EXPO_PUBLIC_BACKEND_URL=${{ env.EXPO_PUBLIC_BACKEND_URL }}"
+          } > .env
+          echo "--- frontend/.env ---"
+          cat .env
+
+      - name: Install JS dependencies (auto-detect npm / yarn)
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -e
+          if [ -f package-lock.json ]; then
+            echo "📦 Using npm (package-lock.json found)"
+            npm ci --legacy-peer-deps --no-audit --no-fund || npm install --legacy-peer-deps --no-audit --no-fund
+          elif [ -f yarn.lock ]; then
+            echo "📦 Using yarn (yarn.lock found)"
+            corepack enable || true
+            yarn install --frozen-lockfile || yarn install
+          else
+            echo "⚠️  No lockfile found — falling back to plain npm install"
+            npm install --legacy-peer-deps --no-audit --no-fund
+          fi
+
+      - name: Ensure splash/icon assets exist (auto-heal)
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -e
+          mkdir -p assets/images
+          # If splash-icon.png is missing but icon.png exists, copy icon → splash-icon
+          if [ ! -f assets/images/splash-icon.png ] && [ -f assets/images/icon.png ]; then
+            echo "⚠️  splash-icon.png missing — copying from icon.png"
+            cp assets/images/icon.png assets/images/splash-icon.png
+          fi
+          # Same defensive fallback for adaptive-icon
+          if [ ! -f assets/images/adaptive-icon.png ] && [ -f assets/images/icon.png ]; then
+            echo "⚠️  adaptive-icon.png missing — copying from icon.png"
+            cp assets/images/icon.png assets/images/adaptive-icon.png
+          fi
+          # And favicon
+          if [ ! -f assets/images/favicon.png ] && [ -f assets/images/icon.png ]; then
+            echo "⚠️  favicon.png missing — copying from icon.png"
+            cp assets/images/icon.png assets/images/favicon.png
+          fi
+          echo "--- assets/images/ ---"
+          ls -la assets/images/
+
+      - name: Expo prebuild (generate native android/ folder)
+        working-directory: frontend
+        shell: bash
+        run: |
+          # IMPORTANT: react-native-reanimated@4.x + react-native-worklets@0.5
+          # only work on the NEW architecture. Forcing newArchEnabled=false
+          # makes the native build fail in ~4 min at the worklets codegen step.
+          # So we KEEP newArchEnabled=true and instead disable R8 + bump heap
+          # (done in the next step) to fix the original 15-min OOM failure.
+          npx --yes expo prebuild --platform android --no-install --clean
+
+      - name: Patch gradle.properties — disable R8 minify, bump heap (KEEP new arch)
+        working-directory: frontend/android
+        shell: bash
+        run: |
+          set -e
+          PROP="gradle.properties"
+          # We deliberately do NOT set newArchEnabled=false here, because
+          # react-native-reanimated@4 requires the new architecture.
+          # We only disable R8 minify + resource shrinking + bump heap.
+          {
+            echo ""
+            echo "# ---- CI APK build overrides ----"
+            echo "android.enableR8.fullMode=false"
+            echo "hermesEnabled=true"
+            echo "org.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
+            echo "org.gradle.parallel=false"
+            echo "org.gradle.configureondemand=false"
+          } >> "$PROP"
+          # Force minifyEnabled false in app/build.gradle release block
+          GRADLE="app/build.gradle"
+          if grep -qE "minifyEnabled[[:space:]]+true" "$GRADLE"; then
+            sed -i -E 's/minifyEnabled[[:space:]]+true/minifyEnabled false/g' "$GRADLE"
+            echo "✓ minifyEnabled set to false in app/build.gradle"
+          fi
+          if grep -qE "shrinkResources[[:space:]]+true" "$GRADLE"; then
+            sed -i -E 's/shrinkResources[[:space:]]+true/shrinkResources false/g' "$GRADLE"
+            echo "✓ shrinkResources set to false in app/build.gradle"
+          fi
+          echo "--- final gradle.properties tail ---"
+          tail -15 "$PROP"
+
+      - name: Shrink APK — filter to ARM architectures only
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -e
+          GRADLE="android/app/build.gradle"
+          # Most modern Android phones are arm64-v8a (almost all 2018+ devices)
+          # or armeabi-v7a (older). x86/x86_64 are only needed for emulators
+          # and bloat the APK by ~150 MB. Filtering to ARM-only typically
+          # takes the APK from 200+ MB down to 30-50 MB.
+          if grep -q "abiFilters" "$GRADLE"; then
+            echo "✓ abiFilters already configured"
+          elif grep -qE "^[[:space:]]*defaultConfig[[:space:]]*\{" "$GRADLE"; then
+            # Inject `ndk { abiFilters ... }` right after the `defaultConfig {` line
+            sed -i -E 's|^([[:space:]]*defaultConfig[[:space:]]*\{)|\1\n        ndk { abiFilters "arm64-v8a", "armeabi-v7a" }|' "$GRADLE"
+            echo "✓ Injected abiFilters into defaultConfig"
+          else
+            echo "⚠️  defaultConfig block not found — APK will keep all ABIs"
+          fi
+          echo "--- abiFilters location ---"
+          grep -nE "abiFilters|defaultConfig" "$GRADLE" | head -5 || true
+
+      - name: Ensure gradle-wrapper.jar exists
+        working-directory: frontend/android
+        shell: bash
+        run: |
+          WRAPPER_JAR="gradle/wrapper/gradle-wrapper.jar"
+          if [ -s "$WRAPPER_JAR" ]; then
+            echo "gradle-wrapper.jar present"
+            exit 0
+          fi
+          RAW=$(grep -E '^distributionUrl=' gradle/wrapper/gradle-wrapper.properties | cut -d= -f2-)
+          DIST_URL="${RAW//\\:/:}"
+          VERSION=$(basename "$DIST_URL" | sed -E 's/^gradle-([0-9.]+[0-9]).*/\1/')
+          JAR_URL="https://raw.githubusercontent.com/gradle/gradle/v${VERSION}/gradle/wrapper/gradle-wrapper.jar"
+          curl -fsSL --retry 3 "$JAR_URL" -o "$WRAPPER_JAR" || {
+            TMPDIR="$(mktemp -d)"
+            curl -fsSL --retry 3 "$DIST_URL" -o "$TMPDIR/gradle.zip"
+            unzip -p "$TMPDIR/gradle.zip" "gradle-${VERSION}/lib/plugins/gradle-wrapper.jar" > "$WRAPPER_JAR"
+          }
+
+      - name: Make gradlew executable
+        working-directory: frontend/android
+        run: chmod +x ./gradlew
+
+      # ─── Debug APK ─────────────────────────────────────────────────────
+      - name: Enable JS bundling in debug variant (sideload-ready)
+        if: env.BUILD_TYPE == 'debug'
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -e
+          GRADLE="android/app/build.gradle"
+          # In modern React Native (0.81 / Expo SDK 54), debug variants are
+          # excluded from JS bundling by default. To make a debug APK that
+          # runs WITHOUT a Metro server (i.e. sideloadable), we need to set
+          # `debuggableVariants = []` inside the `react { }` block.
+          if grep -qE "^\s*debuggableVariants\s*=\s*\[\s*\]" "$GRADLE"; then
+            echo "✓ debuggableVariants already empty — debug will be bundled"
+          elif grep -qE "^\s*//\s*debuggableVariants" "$GRADLE"; then
+            # Replace the commented example line with the empty-list value
+            sed -i -E 's|^[[:space:]]*//[[:space:]]*debuggableVariants[[:space:]]*=.*|    debuggableVariants = []|' "$GRADLE"
+            echo "✓ Uncommented & set debuggableVariants = []"
+          elif grep -qE "^react[[:space:]]*\{" "$GRADLE"; then
+            # Inject a new line right after `react {`
+            sed -i -E '0,/^react[[:space:]]*\{/ s|^react[[:space:]]*\{|react {\n    debuggableVariants = []|' "$GRADLE"
+            echo "✓ Injected debuggableVariants = [] into react block"
+          else
+            echo "✗ Could not locate react { } block — debug APK may crash on launch"
+            exit 1
+          fi
+          echo "--- patched build.gradle around debuggableVariants ---"
+          grep -nE "react[[:space:]]*\{|debuggableVariants" "$GRADLE" || true
+
+      - name: Pre-bundle JS into native APK (debug standalone)
+        if: env.BUILD_TYPE == 'debug'
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -e
+          mkdir -p android/app/src/main/assets
+          # Generate a production-style JS bundle directly into the standard
+          # React Native location so it ships inside the APK and the app can
+          # launch without a Metro dev server.
+          npx --yes expo export:embed \
+            --platform android \
+            --dev false \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res
+          ls -la android/app/src/main/assets/
+
+      - name: Build Debug APK
+        if: env.BUILD_TYPE == 'debug'
+        working-directory: frontend/android
+        shell: bash
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false"
+        run: |
+          ./gradlew :app:assembleDebug --stacktrace --warning-mode=summary --no-daemon -x lint -x lintDebug
+          echo "--- output ---"
+          find app/build/outputs/apk/debug -type f -name '*.apk' -print
+
+      - name: Rename debug APK
+        if: env.BUILD_TYPE == 'debug'
+        working-directory: frontend/android
+        shell: bash
+        run: |
+          mkdir -p ../../dist
+          cp app/build/outputs/apk/debug/app-debug.apk ../../dist/chingu-speak-debug.apk
+          ls -la ../../dist
+
+      - name: Upload Debug APK artifact
+        if: env.BUILD_TYPE == 'debug'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chingu-speak-debug-apk
+          path: dist/chingu-speak-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      # ─── Release APK (optional, signed) ────────────────────────────────
+      - name: Prepare release signing config
+        if: env.BUILD_TYPE == 'release'
+        working-directory: frontend/android
+        shell: bash
+        env:
+          KEYSTORE_BASE64:   ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD:      ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS:         ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -e
+          FALLBACK_STORE_PASSWORD="ChinguSpeak2025"
+          FALLBACK_KEY_PASSWORD="ChinguSpeak2025"
+          FALLBACK_KEY_ALIAS="chinguspeak"
+
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ]; then
+            echo "Using GitHub Secret keystore"
+            CLEAN_B64=$(printf '%s' "$KEYSTORE_BASE64" | tr -d ' \t\r\n')
+            printf '%s' "$CLEAN_B64" | base64 -d > release.keystore
+            FINAL_STORE_PASSWORD="$KEYSTORE_PASSWORD"
+            FINAL_KEY_PASSWORD="$KEY_PASSWORD"
+            FINAL_KEY_ALIAS="$KEY_ALIAS"
+          else
+            echo "Generating ephemeral keystore for tester build (not for Play upload!)"
+            keytool -genkeypair -v \
+              -keystore release.keystore \
+              -storepass "$FALLBACK_STORE_PASSWORD" \
+              -keypass  "$FALLBACK_KEY_PASSWORD" \
+              -alias    "$FALLBACK_KEY_ALIAS" \
+              -keyalg RSA -keysize 2048 -validity 10950 \
+              -dname "CN=ChinguSpeak, OU=Mobile, O=Chingu, L=Casablanca, ST=Casablanca, C=MA" \
+              -storetype PKCS12 2>&1 | tail -5
+            FINAL_STORE_PASSWORD="$FALLBACK_STORE_PASSWORD"
+            FINAL_KEY_PASSWORD="$FALLBACK_KEY_PASSWORD"
+            FINAL_KEY_ALIAS="$FALLBACK_KEY_ALIAS"
+          fi
+          chmod 600 release.keystore
+          {
+            echo "FINAL_STORE_PASSWORD=$FINAL_STORE_PASSWORD"
+            echo "FINAL_KEY_PASSWORD=$FINAL_KEY_PASSWORD"
+            echo "FINAL_KEY_ALIAS=$FINAL_KEY_ALIAS"
+          } >> "$GITHUB_ENV"
+
+      - name: Build Release APK
+        if: env.BUILD_TYPE == 'release'
+        working-directory: frontend/android
+        shell: bash
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx6g -XX:MaxMetaspaceSize=1g -Dorg.gradle.daemon=false -Dorg.gradle.parallel=false"
+        run: |
+          ./gradlew :app:assembleRelease --stacktrace --warning-mode=summary --no-daemon -x lint -x lintRelease \
+            -Pandroid.injected.signing.store.file="$(pwd)/release.keystore" \
+            -Pandroid.injected.signing.store.password="${FINAL_STORE_PASSWORD}" \
+            -Pandroid.injected.signing.key.alias="${FINAL_KEY_ALIAS}" \
+            -Pandroid.injected.signing.key.password="${FINAL_KEY_PASSWORD}"
+          ls -la app/build/outputs/apk/release/
+
+      - name: Rename release APK
+        if: env.BUILD_TYPE == 'release'
+        working-directory: frontend/android
+        shell: bash
+        run: |
+          mkdir -p ../../dist
+          # gradle outputs app-release.apk (signed)
+          cp app/build/outputs/apk/release/app-release.apk ../../dist/chingu-speak-release.apk
+          ls -la ../../dist
+
+      - name: Upload Release APK artifact
+        if: env.BUILD_TYPE == 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: chingu-speak-release-apk
+          path: dist/chingu-speak-release.apk
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## 📱 Chingu Speak — APK Build"
+            echo ""
+            echo "**Build type:** \`${BUILD_TYPE}\`"
+            echo ""
+            echo "**Backend URL baked in:** \`${EXPO_PUBLIC_BACKEND_URL}\`"
+            echo ""
+            echo "Download the artifact below and sideload to your Android device."
+            echo "On the device: enable **Install unknown apps** for your browser/file manager, then tap the APK."
+          } >> "$GITHUB_STEP_SUMMARY"

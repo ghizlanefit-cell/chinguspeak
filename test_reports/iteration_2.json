@@ -1,0 +1,60 @@
+{
+  "summary": "Full-stack test of ChinguSpeak Admin (FastAPI mirror + React dashboard). Backend: 21/21 pytest pass after fixing two POST endpoints that were returning 500 due to motor's in-place '_id' mutation. Frontend: login (wrong+right), dashboard with 4 stat cards + charts, LLM Keys (list seeds, toggle reveal, add+persist), Settings page load, Users page (5 demos visible), Languages page load, and Logout all verified end-to-end against the live preview URL. 3 UI assertions on rapid back-to-back navigation (users search debounce, scenarios card text, admins email text) didn't resolve in time, but the underlying APIs all pass pytest.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/languages, POST /api/scenarios, POST /api/styles",
+        "issue": "FIXED — handlers returned the dict that was passed to motor's insert_one(), which mutates it in-place by adding a BSON ObjectId. FastAPI then 500'd with `TypeError: 'ObjectId' object is not iterable`. Added `doc.pop('_id', None)` before returning, matching the existing pattern used in POST /api/llm-keys."
+      },
+      {
+        "endpoint": "CORSMiddleware",
+        "issue": "allow_origins=['*'] with allow_credentials=False is fine for JWT-in-header (current design) but blocks cookie-based auth if you ever switch to it. Note for the PHP port."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Users search", "issue": "Debounced/async filter did not reflect within 800ms in automation; behavior may be fine for a human user. Worth re-checking with longer wait or confirming the filter is wired to /api/users?q=", "affected_selectors": ["[data-testid=\"users-search\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Sidebar nav testids", "issues": ["data-testid is auto-generated from label, producing brittle ids like `nav-llm-&-apis` (ampersand). Consider hardcoding stable ids (nav-llm-keys, nav-dashboard, etc.) for testability."]},
+      {"screen": "Login page", "issues": ["Welcome banner shows 'Welcome back, Super Admin' even before any session exists — minor UX nit."]},
+      {"screen": "Dashboard ResponsiveContainer", "issues": ["Recharts warning: 'The width(170) and height(170) are both fixed numbers, maybe you don't need to use a ResponsiveContainer.' (donut chart)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Replace auto-generated nav data-testid (`nav-${label.toLowerCase().replace(/\\s+/g,'-')}`) with stable hardcoded ids (nav-llm-keys, nav-users, etc.) so test scripts in the request spec match exactly.",
+    "Verify Users page search hits /api/users?q= (or applies client filter immediately) — the UI didn't visibly filter within 800ms in automation.",
+    "Backend: after every db.X.insert_one(doc), always `doc.pop('_id', None)` before returning. Apply same defensive pattern to any future POST endpoint.",
+    "Drop unused ResponsiveContainer around the fixed-size donut chart on the dashboard to silence Recharts warning."
+  ],
+  "critical_code_review_comments": [
+    "server.py POST /languages, /scenarios, /styles returned the dict that was just inserted by motor — but motor mutates the dict to attach a non-JSON-serializable ObjectId. FIXED in this iteration. (POST /llm-keys was already correct.)",
+    "Login endpoint always re-syncs admin password from env on startup (line 198-202). Good for dev/preview, but in production this means rotating ADMIN_PASSWORD in .env silently overwrites whatever the admin set via UI. Flag for PHP port.",
+    "_lockouts is an in-process dict (line 309). With multiple workers / multiple instances behind Hostinger this won't actually lockout. For PHP port, persist failed-attempts in DB.",
+    "CORS allow_origins=['*']+allow_credentials=False — fine for current bearer-token design, but mention in README that switching to cookies will require explicit origins.",
+    "All Mongo reads correctly project out `_id` ({'_id': 0}) — good.",
+    "JWT_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD, MONGO_URL, DB_NAME all read from env — no hardcoded secrets. Good.",
+    "server.py is ~690 lines — acceptable for current MVP but will exceed the 700-line guideline soon; split into routers (auth, llm_keys, content, users, dashboard) when adding billing/analytics endpoints."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (3 small fixes: doc.pop('_id', None) added to POST /languages, /scenarios, /styles)",
+    "/app/backend/tests/backend_test.py (new — 21 pytest cases covering auth, dashboard, LLM keys CRUD, settings, users, languages, scenarios, admins)"
+  ],
+  "success_rate": {
+    "backend": "100% (21/21 pytest)",
+    "frontend": "~85% (11/13 critical flows confirmed via Playwright; users-search & scenarios/admins page text not confirmed within timeouts but underlying APIs are green)"
+  },
+  "test_credentials": "admin@chinguspeak.com / ChinguAdmin#2026!Secure — verified working. Also seeded in /app/backend/.env (will be re-synced on every startup by server.py line 198-202).",
+  "seed_data_creation": "Tests create ephemeral data prefixed with TEST_ and clean up on teardown (TEST_QA_* for LLM keys, TEST*** for language codes, TEST_scenario_* for scenarios). One persistent QA Test LLM key may remain from the UI 'add key' Playwright test — safe to delete from /llm-keys UI.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run backend tests: `cd /app && pytest backend/tests/backend_test.py -v --junitxml=/app/test_reports/pytest/pytest_results.xml`. Public URL = REACT_APP_BACKEND_URL from /app/frontend/.env. Admin creds in /app/memory/test_credentials.md. Sidebar nav data-testids are auto-generated from labels (e.g. 'LLM & APIs' → `nav-llm-&-apis`); prefer `a[href=\"/llm-keys\"]` for stable selection until main agent renames testids. For the PHP backend port (real deliverable), replicate same fix: never echo back a row that just got an _id attached — re-fetch or strip it.",
+  "rca_of_issue": "POST /api/languages and POST /api/scenarios returned HTTP 500 with `ValueError: [TypeError(\"'ObjectId' object is not iterable\"), TypeError('vars() argument must have __dict__ attribute')]`. RCA: motor's AsyncIOMotorCollection.insert_one(doc) mutates the passed dict in place, adding doc['_id'] = ObjectId(...). The handler then `return doc`, and FastAPI/Pydantic tries to JSON-encode ObjectId, which is not serializable. Fix: pop the _id before returning (the pattern already used in POST /llm-keys at line 408). Verified by re-running the full pytest suite: 21/21 pass."
+}

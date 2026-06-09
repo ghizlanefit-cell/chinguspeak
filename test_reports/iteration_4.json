@@ -1,0 +1,84 @@
+{
+  "summary": "Executed full-stack validation for hosted ChinguSpeak admin + mobile camera route. Admin login works, LLM key creation works (API and UI), direct DELETE works, but POST fallback delete route fails with 404. Mobile camera route is broken on hosted web: /mobile/camera resolves to Unmatched Route and camera controls never render.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/llm-keys/{id}/delete",
+        "issue": "Fallback delete route returns 404 Not found on hosted PHP backend; expected compatibility route is not active in deployment.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Expo web camera route",
+        "issue": "Navigating to /mobile/camera shows Unmatched Route page instead of camera screen.",
+        "selector": "[data-testid=\"camera-take-photo-button\"]",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "Admin LLM keys delete action",
+        "issue": "Delete click shows success toast but target TEST_UI row remained in table in UI run.",
+        "selector": "[data-testid^=\"delete-key-\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Mobile welcome -> camera",
+        "issue": "Get Started flow can navigate to /mobile/camera but hosted build returns route mismatch/422 and renders Unmatched Route page.",
+        "affected_selectors": [
+          "[data-testid*=\"camera\"]",
+          "[data-testid=\"camera-translate-button\"]"
+        ]
+      },
+      {
+        "flow": "Admin LLM key delete fallback",
+        "issue": "UI fallback expectation (POST /llm-keys/{id}/delete) cannot work because backend route returns 404 in hosted environment.",
+        "affected_selectors": [
+          "[data-testid^=\"delete-key-\"]"
+        ]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Mobile web console",
+        "issues": [
+          "Route table warning in console: layout references 'voice' and 'translate' routes that do not exist in nested children.",
+          "Ionicons/Feather font decode errors on hosted /mobile build."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/chinguspeak/tests/test_hostinger_admin_php.py",
+    "/app/test_reports/pytest/pytest_results_iteration_4.xml"
+  ],
+  "action_items": [
+    "Deploy backend route support for POST /api/llm-keys/{id}/delete on Hostinger (index.php route table or rewrite mismatch).",
+    "Fix Expo hosted routing so /mobile/camera maps to app/camera.tsx and renders camera testids.",
+    "Investigate admin UI delete flow mismatch (success toast with persistent row) after backend fallback route is fixed.",
+    "Create /app/memory/test_credentials.md (missing in this environment) for future auth-flow testing compliance."
+  ],
+  "critical_code_review_comments": [
+    "php-backend/index.php contains fallback route logic in repo, but hosted runtime behavior proves deployed code/rewrite rules are not aligned.",
+    "camera.tsx and _layout.tsx include camera screen/testIDs correctly in source, so failure is deployment/routing mismatch rather than component absence.",
+    "_layout.tsx references Stack screens 'voice' and 'translate' while available files are 'voice-screen' and 'translate-screen'; console warnings confirm route drift."
+  ],
+  "updated_files": [
+    "/app/chinguspeak/tests/test_hostinger_admin_php.py",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "success_rate": {
+    "backend": "75% (3/4 pytest in hosted regression file)",
+    "frontend": "50% (admin login + add key pass; camera route + delete behavior fail)"
+  },
+  "test_credentials": "Required file /app/memory/test_credentials.md is missing. Used credentials provided in request: admin@chinguspeak.com / ChinguAdmin#2026!Secure.",
+  "seed_data_creation": "Created temporary LLM keys with TEST_API_* and TEST_PY_* labels; direct-delete test cleans up. Some TEST_UI_* rows remain from UI flow due delete inconsistency.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run `pytest /app/chinguspeak/tests/test_hostinger_admin_php.py -v --junitxml=/app/test_reports/pytest/pytest_results_iteration_4.xml`. Reproduce camera bug quickly at https://linen-wolf-239815.hostingersite.com/mobile/camera (shows Unmatched Route). Validate delete fallback with curl POST /api/llm-keys/{id}/delete after deployment fix.",
+  "rca of the issue": "RCA-1: Hosted PHP deployment does not expose fallback POST delete route despite repository code containing it; likely stale deployment or web server rewrite/path handling difference. Repro: login -> create key -> POST /api/llm-keys/{id}/delete returns 404. RCA-2: Hosted Expo web routing maps camera navigation to unresolved route, returning Unmatched Route/422; likely export/base path route config mismatch between build and deployed static hosting."
+}

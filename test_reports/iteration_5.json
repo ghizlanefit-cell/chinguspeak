@@ -1,0 +1,60 @@
+{
+  "summary": "Ran targeted regression for Mobile Preview routing + Expo APK workflow config. Backend/public route checks pass, but camera deep-link remains broken: both direct /mobile/camera and iframe Camera Translate flow still render Unmatched Route.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Mobile Preview iframe (Expo web app)",
+        "issue": "After Get Started and selecting Camera Translate, iframe renders Unmatched Route instead of camera screen.",
+        "selector": "[data-testid=\"mobile-iframe\"]",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "Direct mobile camera route",
+        "issue": "Opening /mobile/camera shows Unmatched Route page.",
+        "selector": "route:/mobile/camera",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Mobile Preview -> Get Started -> Camera Translate",
+        "issue": "Camera route mapping is still invalid in deployed Expo web export/base path; deep-link resolves to unmatched route.",
+        "affected_selectors": [
+          "[data-testid=\"mobile-iframe\"]"
+        ]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_mobile_preview_regression.py",
+    "/app/test_reports/pytest/pytest_results_iteration_5.xml"
+  ],
+  "action_items": [
+    "Fix Expo web routing/deep-link handling so /mobile/camera resolves to the camera screen in production static hosting.",
+    "Rebuild and redeploy web export for mobile bundle after route fix, then retest iframe Camera Translate flow.",
+    "After route fix, re-run mobile preview e2e plus direct /mobile and /mobile/camera checks."
+  ],
+  "critical_code_review_comments": [
+    "frontend/public/mobile/index.html and MobilePreview.js are correctly wired to /mobile/, so failure is downstream route-resolution in deployed Expo web build, not admin iframe embedding.",
+    "GitHub workflow yaml is structurally valid for required triggers (push main + workflow_dispatch) and runs both EAS profiles via EXPO_TOKEN.",
+    "eas.json includes both required profiles (preview and production-apk) with android buildType apk."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_mobile_preview_regression.py",
+    "/app/test_reports/iteration_5.json"
+  ],
+  "success_rate": {
+    "backend": "100% (4/4 targeted tests)",
+    "frontend": "60% (3/5 requested checks passed; camera-route related checks failed)"
+  },
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Use admin creds from /app/memory/test_credentials.md. Repro in 2 ways: (1) login -> /mobile-preview -> iframe Get Started -> Camera Translate, (2) open https://linen-wolf-239815.hostingersite.com/mobile/camera. Both currently show Unmatched Route. Backend regression file already added at /app/backend/tests/test_mobile_preview_regression.py.",
+  "rca of the issue": "RCA: camera deep-link route is not resolving under deployed /mobile static hosting context. Root/index route (/mobile/) works, but nested camera path fails consistently both direct and via in-app navigation, indicating export/base path/router mismatch in deployed Expo web artifact rather than admin-page iframe code."
+}

@@ -1,0 +1,170 @@
+{
+  "summary": "Comprehensive testing of ChinguSpeak Premium upgrade features. CRITICAL: 7 backend routes on Hostinger PHP are returning 404 (transcribe, tts, credits/*, subscriptions/verify, modules/content). Preview FastAPI backend also missing credits/subscriptions/modules routes. Frontend camera route NOW WORKING. Learn page shows 'Page not found'. Icon fonts broken across all mobile pages.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/transcribe",
+        "issue": "Returns 404 'Not found' on Hostinger - Groq STT route NOT DEPLOYED",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "POST /api/tts",
+        "issue": "Returns 404 'Not found' on Hostinger - Google TTS/OpenAI fallback route NOT DEPLOYED",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "GET /api/credits/me",
+        "issue": "Returns 404 'Not found' on Hostinger - credits endpoint NOT DEPLOYED",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "POST /api/credits/reward",
+        "issue": "Returns 404 'Not found' on Hostinger - rewarded credits endpoint NOT DEPLOYED",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "GET /api/credits/events",
+        "issue": "Returns 404 'Not found' on Hostinger - credit events endpoint NOT DEPLOYED",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "POST /api/subscriptions/verify",
+        "issue": "Returns 404 'Not found' on Hostinger - subscription verification NOT DEPLOYED",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "POST /api/modules/content",
+        "issue": "Returns 404 'Not found' on Hostinger - Gemini module content generation NOT DEPLOYED",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "Preview FastAPI /api/credits/*",
+        "issue": "Credits endpoints not implemented in preview FastAPI backend (mobile_routes.py)",
+        "priority": "MEDIUM"
+      },
+      {
+        "endpoint": "Preview FastAPI /api/modules/content",
+        "issue": "Module content endpoint not implemented in preview FastAPI backend",
+        "priority": "MEDIUM"
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Learn page",
+        "issue": "/mobile/learn shows 'Page not found' - route broken in deployed build",
+        "selector": "route:/mobile/learn",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "Icon fonts",
+        "issue": "Ionicons and Feather fonts fail to decode (OTS parsing error: invalid sfntVersion) - icons appear as blank boxes",
+        "selector": "all icon elements",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Paywall balance card",
+        "issue": "data-testid='paywall-balance-card' not found - different UI than source code",
+        "selector": "[data-testid='paywall-balance-card']",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "Credits pill",
+        "issue": "data-testid='home-credits-pill' not found on home page",
+        "selector": "[data-testid='home-credits-pill']",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Voice popup mascot animation",
+        "issue": "Could not verify mascot animation during TTS - microphone permission denied in browser automation. Voice popup testIDs not found after recording attempt.",
+        "affected_selectors": [
+          "[data-testid='voice-popup-overlay']",
+          "[data-testid='voice-popup-card']",
+          "[data-testid='voice-popup-mascot']"
+        ]
+      },
+      {
+        "flow": "Learn/Scenarios/Modes AI content",
+        "issue": "Tutorial/Learn/Role-Play AI-generated content preview not visible - likely due to /api/modules/content returning 404",
+        "affected_selectors": [
+          "[data-testid='tutorial-module-preview']",
+          "[data-testid='roleplay-generated-preview']",
+          "[data-testid='learn-title-text']"
+        ]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "All mobile pages",
+        "issues": [
+          "Icons render as blank boxes due to font decode errors",
+          "Back buttons, menu icons, mic icons all affected"
+        ]
+      }
+    ]
+  },
+  "working_features": {
+    "backend": [
+      "GET /api/health - OK on both Hostinger and Preview",
+      "GET /api/ping - OK on both backends",
+      "POST /api/translate - OK on Hostinger (returns 503 for missing LLM key)",
+      "POST /api/chat - OK on Hostinger (returns 503 for missing LLM key)",
+      "GET /api/public/languages - OK on both backends",
+      "GET /api/public/scenarios - OK on both backends",
+      "GET /api/public/settings - OK on both backends",
+      "POST /api/admin-auth/login - OK on both backends"
+    ],
+    "frontend": [
+      "/mobile/camera - NOW WORKING (was broken in iteration 4-5)",
+      "/mobile/scenarios - Working with scenario list",
+      "/mobile/modes - Working with Tutor/Role-Play cards",
+      "/mobile/language-picker - Working",
+      "/mobile/settings/app-language - Working with language selection",
+      "Voice screen - Voice start button found and clickable"
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_chinguspeak_api.py",
+    "/app/test_reports/pytest/pytest_results_iteration_7.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Deploy updated PHP backend to Hostinger with all new routes (transcribe, tts, credits/*, subscriptions/verify, modules/content)",
+    "CRITICAL: Fix /mobile/learn route - currently shows 'Page not found'",
+    "HIGH: Fix Expo icon font asset serving - Ionicons and Feather fonts fail to decode",
+    "MEDIUM: Add credits/subscriptions/modules routes to Preview FastAPI backend (mobile_routes.py) for parity",
+    "MEDIUM: Verify voice popup mascot animation works when TTS plays (requires working /api/tts endpoint)",
+    "LOW: Ensure data-testid attributes match between source code and deployed build"
+  ],
+  "critical_code_review_comments": [
+    "PHP backend index.php and mobile.php contain all required routes in source, but Hostinger deployment is NOT updated - routes return 404",
+    "Preview FastAPI mobile_routes.py is missing credits/subscriptions/modules endpoints that exist in PHP backend",
+    "Icon font files are corrupted or incorrectly served on Hostinger - OTS parsing error indicates invalid font format",
+    "Learn route exists in /app/chinguspeak-app/frontend/app/mobile/learn.tsx but deployed build shows 'Page not found'"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_chinguspeak_api.py",
+    "/app/test_reports/iteration_7.json"
+  ],
+  "success_rate": {
+    "backend": "74% (20/27 tests passed - 7 critical Hostinger route failures)",
+    "frontend": "65% (camera fixed, learn broken, icons broken, voice popup untestable)"
+  },
+  "test_credentials": "admin@chinguspeak.com / ChinguAdmin#2026!Secure - working on both backends",
+  "seed_data_creation": "None",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run pytest /app/backend/tests/test_chinguspeak_api.py to verify backend routes. Camera route is now working. Learn page is broken. All 7 new Premium routes (transcribe, tts, credits/*, subscriptions/verify, modules/content) return 404 on Hostinger - PHP deployment needs update. Icon fonts broken across all mobile pages.",
+  "rca_of_the_issue": "PRIMARY RCA: Hostinger PHP backend deployment is STALE - the index.php and mobile.php files in the repository contain all required routes, but the deployed version on Hostinger does not have these routes active (all return 404). This is a deployment synchronization issue. SECONDARY RCA: Icon font files are either corrupted during build/deploy or served with incorrect MIME type, causing OTS parsing errors. TERTIARY RCA: Learn route exists in source but deployed Expo web build shows 'Page not found' - likely build/export configuration issue.",
+  "mocked_api": {
+    "has_mocked_apis": true,
+    "mocked_apis_list": [
+      "AdMob rewarded completion trigger is app-side/manual hook (as documented)",
+      "Google Play verification endpoint stores/activates and returns pending-server-verification (as documented)"
+    ]
+  }
+}

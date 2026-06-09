@@ -1,0 +1,48 @@
+{
+  "summary": "Backend-only testing for Polyglot AI Translator (Pingo-style). 19 pytest cases written covering languages, translate (en→ko/fr/ar-ma + auto→es), image OCR+translate, TTS, transcribe (whisper-1), chat session persistence/clear, and history CRUD with favorite. All 19 tests pass after one backend fix (transcribe was passing a str filepath into OpenAI/litellm which expects file-handle/PathLike). Note: intermittent 500s observed when many Gemini calls run back-to-back due to an Emergent LLM Key per-window budget — endpoint code is correct.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/translate, /api/translate-image, /api/chat",
+        "issue": "Intermittent 500 'litellm.BadRequestError: OpenAIException - Budget has been exceeded! Current cost: 0.0036, Max budget: 0.001' when many LLM calls run in rapid succession. Appears to be an EMERGENT_LLM_KEY per-window budget throttle, not a code defect. Re-running after a short wait succeeds. Consider exposing a friendlier 429-style error in the API and/or implementing simple retry-with-backoff on the server side."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Surface LLM budget/rate-limit errors as 429 with a clear message instead of opaque 500, and consider a small server-side retry on litellm BadRequestError 'Budget has been exceeded'.",
+    "Add a UX-level rate-limit notice in the frontend chat/translate flows so users aren't confused by transient 500s while the key budget window resets."
+  ],
+  "critical_code_review_comments": [
+    "server.py /api/transcribe was passing the temp file path as a str into emergentintegrations OpenAISpeechToText.transcribe(file=...), which litellm/openai-python rejects ('Expected entry at file to be bytes, an io.IOBase instance, PathLike or a tuple but received <class str>'). FIXED by opening the file handle (`with open(tmp.name, 'rb') as fh: kwargs['file']=fh`).",
+    "Single 510-line server.py is acceptable for current MVP but will grow quickly — when image/voice features expand, split into routers (translate, chat, history, audio) for maintainability.",
+    "Chat replays the last 10 turns by stringifying them into the prompt. This works but doesn't leverage LlmChat's native multi-turn state. Functional and correct; just note for future refactor.",
+    "All Mongo reads correctly project out `_id` ({'_id': 0}) — good.",
+    "All env vars (MONGO_URL, DB_NAME, EMERGENT_LLM_KEY) read from environment — no hardcoded secrets/URLs in code."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (1 fix: opened audio file handle for whisper transcription)",
+    "/app/backend/tests/backend_test.py (new)",
+    "/app/backend/tests/conftest.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (19/19 pytest, including transcribe after fix)",
+    "frontend": "skipped (testing_type = backend only)"
+  },
+  "seed_data_creation": "Tests create their own ephemeral history items prefixed with TEST_ and clean them up via DELETE. Chat session ids are TEST_session_<uuid> and cleaned via DELETE /api/chat/{session_id}.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend public URL = EXPO_PUBLIC_BACKEND_URL from /app/frontend/.env. Run: `cd /app/backend && pytest tests/backend_test.py -v --junitxml=/app/test_reports/pytest/pytest_results.xml`. Image OCR test renders a PNG with PIL (DejaVuSans-Bold). Transcribe test reuses /api/tts output as input — depends on TTS working. If you see batch 500s mentioning 'Budget has been exceeded', wait 15–30s and rerun individual tests — it's an LLM key budget window, not a regression.",
+  "rca_of_issue": "Issue: POST /api/transcribe → 500 'Expected entry at file to be bytes, an io.IOBase instance, PathLike or a tuple but received <class str>'. RCA: server.py wrote audio bytes to a NamedTemporaryFile and then passed `tmp.name` (a str) into emergentintegrations OpenAISpeechToText.transcribe(file=...). Internally litellm/openai-python's multipart upload requires bytes / io.IOBase / PathLike / tuple. A str path is not auto-coerced. Fix: open the temp file in binary mode and pass the file handle. Verified by re-running TestTranscribe — passes and returns a whisper-1 transcript that contains >=2 of the expected keywords from the synthesized TTS audio."
+}

@@ -1,0 +1,158 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: 'Build profile (installable APK profiles)'
+        required: true
+        default: 'production-apk'
+        type: choice
+        options:
+          - apk
+          - preview
+          - production-apk
+          - production
+  push:
+    branches: [main]
+
+env:
+  PROJECT_DIR: frontend
+
+jobs:
+  build:
+    name: EAS Android Build
+    runs-on: ubuntu-latest
+    env:
+      BUILD_PROFILE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.profile || 'production-apk' }}
+    steps:
+      - name: 🏗 Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 🧭 Detect Expo project directory
+        run: |
+          if [ -f "frontend/package.json" ] && [ -f "frontend/app.json" ] && [ -f "frontend/eas.json" ]; then
+            echo "PROJECT_DIR=frontend" >> "$GITHUB_ENV"
+            echo "Using frontend (primary)"
+          elif [ -f "chinguspeak-app/frontend/package.json" ] && [ -f "chinguspeak-app/frontend/app.json" ] && [ -f "chinguspeak-app/frontend/eas.json" ]; then
+            echo "PROJECT_DIR=chinguspeak-app/frontend" >> "$GITHUB_ENV"
+            echo "Using chinguspeak-app/frontend (fallback)"
+          else
+            echo "::error::Could not find valid Expo project (need package.json + app.json + eas.json) in frontend or chinguspeak-app/frontend"
+            echo "Repo tree (top):"
+            ls -la
+            exit 1
+          fi
+
+      - name: 🔎 Preflight — verify project structure
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "Current dir: $(pwd)"
+          echo "Listing project dir:"
+          ls -la
+          test -f package.json || { echo "::error::package.json NOT FOUND in $PWD"; exit 1; }
+          test -f app.json     || { echo "::error::app.json NOT FOUND in $PWD"; exit 1; }
+          test -f eas.json     || { echo "::error::eas.json NOT FOUND in $PWD"; exit 1; }
+          echo "✅ package.json + app.json + eas.json all present"
+          echo ""
+          echo "=== eas.json ==="
+          cat eas.json
+
+      - name: 🟢 Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+          cache-dependency-path: |
+            **/yarn.lock
+
+      - name: 🧰 Setup EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: ❓ Verify EXPO_TOKEN was provided
+        run: |
+          if [ -z "${{ secrets.EXPO_TOKEN }}" ]; then
+            echo "::error title=EXPO_TOKEN missing::Add EXPO_TOKEN as a repo secret. Get it from https://expo.dev/settings/access-tokens"
+            exit 1
+          fi
+          eas whoami
+
+      - name: 📦 Install dependencies
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          if [ -f package-lock.json ]; then
+            echo "Removing package-lock.json to avoid npm/yarn lock conflict"
+            rm -f package-lock.json
+          fi
+          if [ ! -f yarn.lock ]; then
+            echo "No yarn.lock found, generating one"
+            yarn install --network-timeout 600000
+          fi
+          yarn install --network-timeout 600000
+          echo "Lockfile sync check"
+          yarn install --check-files --network-timeout 600000
+
+      - name: 🚀 Trigger EAS build
+        id: build
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          PROFILE="$BUILD_PROFILE"
+          echo "Building from: $(pwd)"
+          echo "Profile:       $PROFILE"
+          eas build \
+            --platform android \
+            --profile "$PROFILE" \
+            --non-interactive \
+            --no-wait \
+            --json > /tmp/build.json
+          cat /tmp/build.json
+          BUILD_ID=$(jq -r '.[0].id' /tmp/build.json)
+          ACCOUNT=$(jq -r '.[0].project.account.name' /tmp/build.json)
+          SLUG=$(jq -r '.[0].project.slug' /tmp/build.json)
+          echo "BUILD_ID=$BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo "EAS_URL=https://expo.dev/accounts/$ACCOUNT/projects/$SLUG/builds/$BUILD_ID" >> "$GITHUB_OUTPUT"
+          echo ""
+          echo "👉 Build queued: https://expo.dev/accounts/$ACCOUNT/projects/$SLUG/builds/$BUILD_ID"
+
+      - name: ⏳ Poll until APK is ready
+        if: steps.build.outputs.BUILD_ID != ''
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          BUILD_ID="${{ steps.build.outputs.BUILD_ID }}"
+          for i in $(seq 1 80); do
+            STATUS=$(eas build:view "$BUILD_ID" --json | jq -r '.status')
+            echo "[$i/80] status=$STATUS"
+            case "$STATUS" in
+              FINISHED)
+                URL=$(eas build:view "$BUILD_ID" --json | jq -r '.artifacts.buildUrl')
+                echo "::notice title=APK ready::$URL"
+                echo "APK_URL=$URL" >> "$GITHUB_ENV"
+                exit 0
+                ;;
+              ERRORED|CANCELED)
+                echo "::error title=Build $STATUS::See ${{ steps.build.outputs.EAS_URL }}"
+                exit 1
+                ;;
+            esac
+            sleep 30
+          done
+          echo "::warning::Build did not finish within 40 min. Check ${{ steps.build.outputs.EAS_URL }} manually."
+
+      - name: 🎉 Job summary
+        if: always()
+        run: |
+          {
+            echo "## ChinguSpeak Android Build"
+            echo ""
+            echo "- **EAS dashboard:** ${{ steps.build.outputs.EAS_URL }}"
+            if [ -n "$APK_URL" ]; then
+              echo "- **APK download:**  $APK_URL"
+              echo ""
+              echo "Install on Android: open the APK link on your phone → Download → tap the file → allow unknown sources → install."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 3 — full-stack regression of ChinguSpeak admin + mobile-link feature. Backend: 32/32 pytest pass (21 existing admin tests migrated to /api/admin-auth/* + 11 new mobile/public/translate/chat/banned-user tests). Frontend: Mobile Preview sidebar entry with 'Live' badge is visible, /mobile-preview iframe loads the real Expo Web build (welcome screen 'Talk to the world, your way.' + 'Get Started' button — NOT the 'Unmatched Route' error), and the three device toggles (phone/tablet/desktop) correctly resize the iframe (373→766→1278 px). Real LLM round-trips through emergentintegrations work (Hello→Korean Hangul in <5s, /chat returns a non-trivial Chingu reply, history persists). Privacy check passed: GET /api/public/active-llm returns provider/model/label only and DOES NOT leak api_key. Banned-user flow fully validated: admin PATCH is_banned=true → next /api/auth/login returns 403 with 'suspend' message → unban restores 200.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard donut chart", "issues": ["Recharts warning still present: 'The width(170) and height(170) are both fixed numbers, maybe you don't need to use a ResponsiveContainer.' Carry-over from iteration 2 — non-blocking."]},
+      {"screen": "Login page", "issues": ["Pre-auth banner still reads 'Welcome back, Super Admin' even with no session — minor UX nit carried from iteration 2."]},
+      {"screen": "React Router", "issues": ["Future-flag warnings (v7_startTransition, v7_relativeSplatPath) on every page load — purely informational, no functional impact."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional) Suppress the Recharts ResponsiveContainer warning by dropping the wrapper around the fixed-size donut on the dashboard.",
+    "(Optional) Drop the pre-auth 'Welcome back, Super Admin!' line on the /login page.",
+    "(Optional) Opt-in to React Router v7 future flags to silence console warnings."
+  ],
+  "critical_code_review_comments": [
+    "Admin auth has been cleanly relocated to /api/admin-auth/login|me|logout — verified by tests; mobile-user /api/auth/login is now a separate, JWT-scoped ('scope':'user') route. No path collision.",
+    "mobile_routes.resolve_active_llm() correctly reads admin DB on every request (settings.active_llm_provider → llm_keys.is_active filter → EMERGENT_LLM_KEY fallback). This means UI toggles propagate immediately without redeploy — good architecture.",
+    "/api/public/active-llm correctly strips api_key from response (privacy-critical) — tests assert this.",
+    "is_banned enforcement is on both /api/auth/login (403) and /api/auth/me (403) — defense in depth.",
+    "server.py is now 701 lines — just past the 700-line guideline. Consider splitting into routers (auth, llm_keys, content, users, dashboard) before adding more endpoints.",
+    "JWT secret + ADMIN_EMAIL + ADMIN_PASSWORD + MONGO_URL + EMERGENT_LLM_KEY all sourced from env. No hardcoded secrets.",
+    "All Mongo reads project out _id ({'_id': 0}); all writes that echo back the doc pop _id. No serializer regressions.",
+    "MobilePreview.js correctly uses src='/mobile/' (same-origin), so the iframe is readable in DevTools/Playwright (verified — read 'Talk to the world, your way.' from inside the frame).",
+    "Sidebar nav-mobile-preview has a stable hardcoded id ('mobile-preview') matching the spec — the iteration-2 brittleness (auto-generated ids with ampersands) is gone."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (migrated admin auth to /admin-auth/*, added 11 new tests: ping, public/active-llm privacy, public/scenarios, public/languages, mobile user login + /auth/me + wrong-pw, /translate hello→ko, /chat + /chat/{sid}/history, banned-user ban→403→unban→200 flow)"
+  ],
+  "success_rate": {
+    "backend": "100% (32/32 pytest)",
+    "frontend": "100% (login, sidebar Live badge, /mobile-preview page, iframe real-content load, 3 device toggles)"
+  },
+  "test_credentials": "Admin: admin@chinguspeak.com / ChinguAdmin#2026!Secure — works at POST /api/admin-auth/login. Mobile user: testuser@chinguspeak.com / test1234 — works at POST /api/auth/login (existed from iteration 2; tests will register-then-login if missing).",
+  "seed_data_creation": "All test data is prefixed TEST_ and cleaned up in teardown. The banned-user test always un-bans testuser@chinguspeak.com in a finally block so subsequent runs can re-use it.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: `pytest /app/backend/tests/backend_test.py -v --junitxml=/app/test_reports/pytest/pytest_results.xml`. Frontend URL is in /app/frontend/.env (REACT_APP_BACKEND_URL). Admin login is now at /api/admin-auth/login (NOT /api/auth/login — that's mobile users). The /mobile-preview page embeds /mobile/ (same-origin static export); Playwright can read iframe text via page.frame_locator. Real LLM calls (/translate, /chat) take 2-8s — use timeout>=30 on those requests. The test user (testuser@chinguspeak.com) may be left in is_banned=false after the ban test (intentional, via try/finally).",
+  "rca_of_issue": "No bugs found in iteration 3. Iteration 2's main finding (POST /languages|scenarios|styles returning 500 due to motor's in-place ObjectId mutation) is fixed and stays green. New surface (mobile_routes.py, MobilePreview.js, /mobile/ static export) is fully working end-to-end."
+}
